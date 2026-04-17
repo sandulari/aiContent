@@ -1,0 +1,217 @@
+databases:
+  - name: shadowpages-db
+    plan: starter
+    databaseName: vre
+    user: vre_user
+    postgresMajorVersion: "16"
+    ipAllowList: []
+
+  - name: shadowpages-redis
+    plan: starter
+    ipAllowList: []
+    maxmemoryPolicy: allkeys-lru
+
+services:
+  # ── API ────────────────────────────────────────────────────
+  - type: web
+    name: shadowpages-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./services/api/Dockerfile
+    dockerContext: ./services/api
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: shadowpages-db
+          property: connectionString
+        # Render gives postgres://, FastAPI needs postgresql+asyncpg://
+      - key: REDIS_URL
+        fromService:
+          name: shadowpages-redis
+          type: redis
+          property: connectionString
+      - key: MINIO_ENDPOINT
+        fromService:
+          name: shadowpages-minio
+          type: pserv
+          property: hostport
+      - key: MINIO_ACCESS_KEY
+        sync: false
+      - key: MINIO_SECRET_KEY
+        sync: false
+      - key: MINIO_SECURE
+        value: "false"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRATION_HOURS
+        value: "24"
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: AI_PROVIDER
+        value: anthropic
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: "Shadow Pages <noreply@yourdomain.com>"
+      - key: APP_URL
+        value: "https://shadowpages-web.onrender.com"
+      - key: CORS_ORIGINS
+        value: "https://shadowpages-web.onrender.com"
+
+  # ── Web Frontend ───────────────────────────────────────────
+  - type: web
+    name: shadowpages-web
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./apps/web/Dockerfile
+    dockerContext: ./apps/web
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: "https://shadowpages-api.onrender.com"
+
+  # ── MinIO (Object Storage) ────────────────────────────────
+  - type: pserv
+    name: shadowpages-minio
+    runtime: docker
+    plan: starter
+    disk:
+      name: minio-data
+      mountPath: /data
+      sizeGB: 20
+    dockerCommand: server /data --console-address :9001
+    image:
+      url: minio/minio:latest
+    envVars:
+      - key: MINIO_ROOT_USER
+        sync: false
+      - key: MINIO_ROOT_PASSWORD
+        sync: false
+
+  # ── Worker: Scraper ────────────────────────────────────────
+  - type: worker
+    name: shadowpages-worker-scraper
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./services/worker/Dockerfile
+    dockerContext: ./services/worker
+    dockerCommand: celery -A celery_app worker -Q queue.scrape,queue.discover,queue.analyze -c 4 -E --loglevel=info
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: shadowpages-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: shadowpages-redis
+          type: redis
+          property: connectionString
+      - key: MINIO_ENDPOINT
+        fromService:
+          name: shadowpages-minio
+          type: pserv
+          property: hostport
+      - key: MINIO_ACCESS_KEY
+        sync: false
+      - key: MINIO_SECRET_KEY
+        sync: false
+      - key: MINIO_SECURE
+        value: "false"
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+  # ── Worker: Downloader ─────────────────────────────────────
+  - type: worker
+    name: shadowpages-worker-downloader
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./services/worker/Dockerfile
+    dockerContext: ./services/worker
+    dockerCommand: celery -A celery_app worker -Q queue.download,queue.search -c 4 -E --loglevel=info
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: shadowpages-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: shadowpages-redis
+          type: redis
+          property: connectionString
+      - key: MINIO_ENDPOINT
+        fromService:
+          name: shadowpages-minio
+          type: pserv
+          property: hostport
+      - key: MINIO_ACCESS_KEY
+        sync: false
+      - key: MINIO_SECRET_KEY
+        sync: false
+      - key: MINIO_SECURE
+        value: "false"
+      - key: RAPIDAPI_KEY
+        sync: false
+
+  # ── Worker: Enhancer + Exporter ────────────────────────────
+  - type: worker
+    name: shadowpages-worker-enhancer
+    runtime: docker
+    plan: standard
+    dockerfilePath: ./services/worker/Dockerfile
+    dockerContext: ./services/worker
+    dockerCommand: celery -A celery_app worker -Q queue.enhance,queue.export -c 2 -E --loglevel=info
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: shadowpages-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: shadowpages-redis
+          type: redis
+          property: connectionString
+      - key: MINIO_ENDPOINT
+        fromService:
+          name: shadowpages-minio
+          type: pserv
+          property: hostport
+      - key: MINIO_ACCESS_KEY
+        sync: false
+      - key: MINIO_SECRET_KEY
+        sync: false
+      - key: MINIO_SECURE
+        value: "false"
+
+  # ── Celery Beat (Scheduler) ────────────────────────────────
+  - type: worker
+    name: shadowpages-celery-beat
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./services/worker/Dockerfile
+    dockerContext: ./services/worker
+    dockerCommand: celery -A celery_app beat --loglevel=info
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: shadowpages-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: shadowpages-redis
+          type: redis
+          property: connectionString
+      - key: MINIO_ENDPOINT
+        fromService:
+          name: shadowpages-minio
+          type: pserv
+          property: hostport
+      - key: MINIO_ACCESS_KEY
+        sync: false
+      - key: MINIO_SECRET_KEY
+        sync: false
+      - key: MINIO_SECURE
+        value: "false"
