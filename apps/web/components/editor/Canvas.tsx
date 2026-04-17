@@ -269,8 +269,27 @@ export function Canvas({
     />
   );
 
+  // Map UI font names to the CSS variables set by next/font/google in layout.tsx
+  const FONT_VAR: Record<string, string> = {
+    "Inter": "var(--font-inter)",
+    "Roboto": "var(--font-roboto)",
+    "Open Sans": "var(--font-open-sans)",
+    "Lato": "var(--font-lato)",
+    "Poppins": "var(--font-poppins)",
+    "Montserrat": "var(--font-montserrat)",
+    "Oswald": "var(--font-oswald)",
+    "Playfair Display": "var(--font-playfair-display)",
+    "Bebas Neue": "var(--font-bebas-neue)",
+    "Raleway": "var(--font-raleway)",
+    "Nunito": "var(--font-nunito)",
+    "Anton": "var(--font-anton)",
+    "DM Sans": "var(--font-dm-sans)",
+    "Space Grotesk": "var(--font-space-grotesk)",
+    "Outfit": "var(--font-outfit)",
+  };
+
   const textStyle = (p: Record<string, any>): React.CSSProperties => ({
-    fontFamily: `'${p.fontFamily || "Inter"}', sans-serif`,
+    fontFamily: `${FONT_VAR[p.fontFamily] || FONT_VAR["Inter"]}, sans-serif`,
     fontSize: `${p.fontSize || 48}px`,
     fontWeight: p.fontWeight || 700,
     color: p.color || "#FFFFFF",
