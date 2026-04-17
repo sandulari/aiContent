@@ -1,0 +1,64 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER || 'deploy' }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            cd ${{ secrets.DEPLOY_PATH || '/opt/shadowpages' }}
+            echo "=== Pulling latest code ==="
+            git fetch origin main
+            git reset --hard origin/main
+            echo "=== Building images ==="
+            cd infra
+            docker compose -f docker-compose.prod.yml build
+            echo "=== Running deploy script ==="
+            cd ..
+            bash infra/deploy.sh
+            echo "=== Deploy complete ==="
+
+      - name: Health check
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER || 'deploy' }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            echo "Waiting for services to start..."
+            sleep 10
+            for i in 1 2 3 4 5; do
+              if curl -sf http://localhost:8080/api/health > /dev/null 2>&1; then
+                echo "Health check passed on attempt $i"
+                exit 0
+              fi
+              echo "Attempt $i failed, retrying in 10s..."
+              sleep 10
+            done
+            echo "Health check failed after 5 attempts"
+            cd ${{ secrets.DEPLOY_PATH || '/opt/shadowpages' }}/infra
+            docker compose -f docker-compose.prod.yml logs --tail=50
+            exit 1
+
+      - name: Post-deploy notification
+        if: success()
+        run: echo "Deployment to production succeeded at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+      - name: Deploy failure notification
+        if: failure()
+        run: echo "Deployment to production FAILED at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"

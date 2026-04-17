@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: #0a0a0a;
+  color: #b0b0b0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: auto !important;
+  pointer-events: auto !important;
+}
+
+::selection { background: rgba(74,222,128,0.15); color: #fff; }
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1a1a1a; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #2a2a2a; }
+* { scrollbar-width: thin; scrollbar-color: #1a1a1a transparent; }
+
+:focus-visible { outline: 1px solid rgba(74,222,128,0.3); outline-offset: 2px; }
+
+input[type="color"] { -webkit-appearance: none; border: none; }
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
+
+/* ── Range sliders ────────────────────────────────────────────────────
+   Canva-style: visible gray track, green fill up to the thumb, larger
+   thumb with a ring. WebKit uses `slider-runnable-track`; the old CSS
+   said `slider-track` (wrong pseudo-element) so only the thumb showed.
+   The fill trick uses a CSS variable `--fill-pct` that each slider sets
+   inline based on (value - min) / (max - min). */
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 24px;
+  background: transparent;
+  cursor: pointer;
+  --fill-pct: 50%;
+}
+
+/* WebKit / Blink (Chrome, Safari, Edge) */
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 4px;
+  background: linear-gradient(
+    to right,
+    #4ade80 0%,
+    #4ade80 var(--fill-pct),
+    #262a31 var(--fill-pct),
+    #262a31 100%
+  );
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #4ade80;
+  border: 2px solid #0a0a0a;
+  box-shadow: 0 0 0 1px #4ade80, 0 2px 6px rgba(74, 222, 128, 0.35);
+  margin-top: -5px; /* centers thumb on 6px track */
+  transition: box-shadow 120ms ease;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.25), 0 2px 8px rgba(74, 222, 128, 0.45);
+}
+input[type="range"]:focus {
+  outline: none;
+}
+input[type="range"]:focus::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.35);
+}
+
+/* Firefox */
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 4px;
+  background: #262a31;
+  border: none;
+}
+input[type="range"]::-moz-range-progress {
+  height: 6px;
+  border-radius: 4px;
+  background: #4ade80;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #4ade80;
+  border: 2px solid #0a0a0a;
+  box-shadow: 0 0 0 1px #4ade80, 0 2px 6px rgba(74, 222, 128, 0.35);
+}

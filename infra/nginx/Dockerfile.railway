@@ -1,0 +1,8 @@
+FROM nginx:alpine
+
+# Copy the template — nginx:alpine auto-runs envsubst on *.template
+# files in /etc/nginx/templates/, outputting to /etc/nginx/conf.d/.
+COPY nginx.railway.conf /etc/nginx/templates/default.conf.template
+
+# Railway injects $PORT; nginx picks it up via the template.
+EXPOSE ${PORT:-80}

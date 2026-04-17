@@ -1,0 +1,15 @@
+celery==5.4.0
+redis==5.2.1
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+minio==7.2.12
+playwright==1.49.1
+instaloader==4.13.1
+yt-dlp==2024.12.13
+imagehash==4.3.1
+Pillow==11.0.0
+httpx==0.28.1
+pydantic==2.10.3
+pydantic-settings==2.7.0
+python-dotenv==1.0.1
+numpy==2.2.1
