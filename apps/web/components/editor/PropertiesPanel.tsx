@@ -14,14 +14,13 @@ interface PropertiesPanelProps {
   onUpdateProps: (layerId: string, props: Record<string, any>) => void;
 }
 
-// Only fonts the worker image actually has — keeps editor preview and
-// rendered output in sync instead of silently falling back to DejaVu.
+// Only fonts available in both the browser (Google Fonts) AND the
+// worker image (apt packages). DejaVu Sans removed — it's server-only.
 const FONTS = [
   { value: "Inter", label: "Inter" },
   { value: "Roboto", label: "Roboto" },
   { value: "Open Sans", label: "Open Sans" },
   { value: "Lato", label: "Lato" },
-  { value: "DejaVu Sans", label: "DejaVu Sans" },
 ];
 
 const WEIGHTS = [
