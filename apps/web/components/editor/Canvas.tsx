@@ -270,7 +270,7 @@ export function Canvas({
   );
 
   const textStyle = (p: Record<string, any>): React.CSSProperties => ({
-    fontFamily: p.fontFamily || "Inter",
+    fontFamily: `'${p.fontFamily || "Inter"}', sans-serif`,
     fontSize: `${p.fontSize || 48}px`,
     fontWeight: p.fontWeight || 700,
     color: p.color || "#FFFFFF",
