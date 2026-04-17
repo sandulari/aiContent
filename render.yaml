@@ -6,12 +6,14 @@ databases:
     postgresMajorVersion: "16"
     ipAllowList: []
 
-  - name: shadowpages-redis
+services:
+  # ── Redis ──────────────────────────────────────────────────
+  - type: redis
+    name: shadowpages-redis
     plan: starter
     ipAllowList: []
     maxmemoryPolicy: allkeys-lru
 
-services:
   # ── API ────────────────────────────────────────────────────
   - type: web
     name: shadowpages-api
@@ -25,17 +27,13 @@ services:
         fromDatabase:
           name: shadowpages-db
           property: connectionString
-        # Render gives postgres://, FastAPI needs postgresql+asyncpg://
       - key: REDIS_URL
         fromService:
           name: shadowpages-redis
           type: redis
           property: connectionString
       - key: MINIO_ENDPOINT
-        fromService:
-          name: shadowpages-minio
-          type: pserv
-          property: hostport
+        value: shadowpages-minio:9000
       - key: MINIO_ACCESS_KEY
         sync: false
       - key: MINIO_SECRET_KEY
@@ -55,11 +53,11 @@ services:
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM
-        value: "Shadow Pages <noreply@yourdomain.com>"
+        sync: false
       - key: APP_URL
-        value: "https://shadowpages-web.onrender.com"
+        sync: false
       - key: CORS_ORIGINS
-        value: "https://shadowpages-web.onrender.com"
+        sync: false
 
   # ── Web Frontend ───────────────────────────────────────────
   - type: web
@@ -70,20 +68,20 @@ services:
     dockerContext: ./apps/web
     envVars:
       - key: NEXT_PUBLIC_API_URL
-        value: "https://shadowpages-api.onrender.com"
+        sync: false
 
   # ── MinIO (Object Storage) ────────────────────────────────
   - type: pserv
     name: shadowpages-minio
-    runtime: docker
+    runtime: image
     plan: starter
     disk:
       name: minio-data
       mountPath: /data
       sizeGB: 20
-    dockerCommand: server /data --console-address :9001
     image:
       url: minio/minio:latest
+    dockerCommand: server /data --console-address :9001
     envVars:
       - key: MINIO_ROOT_USER
         sync: false
@@ -109,10 +107,7 @@ services:
           type: redis
           property: connectionString
       - key: MINIO_ENDPOINT
-        fromService:
-          name: shadowpages-minio
-          type: pserv
-          property: hostport
+        value: shadowpages-minio:9000
       - key: MINIO_ACCESS_KEY
         sync: false
       - key: MINIO_SECRET_KEY
@@ -143,10 +138,7 @@ services:
           type: redis
           property: connectionString
       - key: MINIO_ENDPOINT
-        fromService:
-          name: shadowpages-minio
-          type: pserv
-          property: hostport
+        value: shadowpages-minio:9000
       - key: MINIO_ACCESS_KEY
         sync: false
       - key: MINIO_SECRET_KEY
@@ -175,10 +167,7 @@ services:
           type: redis
           property: connectionString
       - key: MINIO_ENDPOINT
-        fromService:
-          name: shadowpages-minio
-          type: pserv
-          property: hostport
+        value: shadowpages-minio:9000
       - key: MINIO_ACCESS_KEY
         sync: false
       - key: MINIO_SECRET_KEY
@@ -205,10 +194,7 @@ services:
           type: redis
           property: connectionString
       - key: MINIO_ENDPOINT
-        fromService:
-          name: shadowpages-minio
-          type: pserv
-          property: hostport
+        value: shadowpages-minio:9000
       - key: MINIO_ACCESS_KEY
         sync: false
       - key: MINIO_SECRET_KEY
