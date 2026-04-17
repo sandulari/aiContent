@@ -2,22 +2,26 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import get_db
 from middleware.auth import (
+    clear_auth_cookies,
     create_access_token,
+    create_refresh_token,
     create_reset_token,
     get_current_user,
     hash_password,
     hash_reset_token,
+    hash_token,
+    set_auth_cookies,
     verify_password,
 )
 from models.user import User
-from schemas.user import TokenResponse, UserCreate, UserLogin, UserResponse
+from schemas.user import UserCreate, UserLogin, UserResponse
 from services.email_service import send_email
 from services.email_templates import password_reset_email, welcome_email
 
@@ -43,11 +47,38 @@ class ResetPasswordRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _user_dict(user: User) -> dict:
+    """Return the public user payload for auth responses."""
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "display_name": user.display_name,
+        "role": user.role,
+    }
+
+
+async def _issue_tokens(user: User, db: AsyncSession, response: Response) -> dict:
+    """Generate access + refresh tokens, persist refresh hash, set cookies."""
+    access = create_access_token(user.id, role=user.role)
+    raw_refresh, hashed_refresh, refresh_expires = create_refresh_token()
+
+    user.refresh_token = hashed_refresh
+    user.refresh_token_expires = refresh_expires
+    await db.flush()
+
+    set_auth_cookies(response, access, raw_refresh)
+    return {"user": _user_dict(user)}
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: UserCreate, db: AsyncSession = Depends(get_db)):
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+async def register(body: UserCreate, response: Response, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == body.email))
     if result.scalar_one_or_none():
         raise HTTPException(
@@ -58,10 +89,12 @@ async def register(body: UserCreate, db: AsyncSession = Depends(get_db)):
         email=body.email,
         password_hash=hash_password(body.password),
         display_name=body.display_name,
+        role="user",
     )
     db.add(user)
     await db.flush()
-    token = create_access_token(user.id)
+
+    payload = await _issue_tokens(user, db, response)
 
     # Send welcome email (non-blocking — registration succeeds even if email fails)
     try:
@@ -70,11 +103,11 @@ async def register(body: UserCreate, db: AsyncSession = Depends(get_db)):
     except Exception:
         logger.warning("Welcome email failed for %s — continuing", user.email, exc_info=True)
 
-    return TokenResponse(access_token=token)
+    return payload
 
 
-@router.post("/login", response_model=TokenResponse)
-async def login(body: UserLogin, db: AsyncSession = Depends(get_db)):
+@router.post("/login")
+async def login(body: UserLogin, response: Response, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.password_hash):
@@ -82,9 +115,68 @@ async def login(body: UserLogin, db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
-    token = create_access_token(user.id)
-    return TokenResponse(access_token=token)
+    return await _issue_tokens(user, db, response)
 
+
+@router.post("/refresh")
+async def refresh(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """Exchange a valid refresh token cookie for new access + refresh tokens."""
+    raw_refresh = request.cookies.get("refresh_token")
+    if not raw_refresh:
+        raise HTTPException(status_code=401, detail="No refresh token")
+
+    hashed = hash_token(raw_refresh)
+    result = await db.execute(select(User).where(User.refresh_token == hashed))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    if user.refresh_token_expires and user.refresh_token_expires < datetime.now(timezone.utc):
+        # Expired — clear everything
+        user.refresh_token = None
+        user.refresh_token_expires = None
+        await db.flush()
+        clear_auth_cookies(response)
+        raise HTTPException(status_code=401, detail="Refresh token expired")
+
+    # Rotate: issue new pair
+    return await _issue_tokens(user, db, response)
+
+
+@router.post("/logout")
+async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """Clear auth cookies and invalidate the refresh token in DB."""
+    # Try to find user from access token to clear their refresh token
+    token = request.cookies.get("access_token")
+    if token:
+        try:
+            from middleware.auth import verify_access_token
+            payload = verify_access_token(token)
+            user_id = payload.get("sub")
+            if user_id:
+                from uuid import UUID
+                result = await db.execute(select(User).where(User.id == UUID(user_id)))
+                user = result.scalar_one_or_none()
+                if user:
+                    user.refresh_token = None
+                    user.refresh_token_expires = None
+                    await db.flush()
+        except Exception:
+            pass  # Best-effort — always clear cookies regardless
+
+    clear_auth_cookies(response)
+    return {"message": "Logged out"}
+
+
+@router.get("/me", response_model=UserResponse)
+async def me(current_user: User = Depends(get_current_user)):
+    return current_user
+
+
+# ---------------------------------------------------------------------------
+# Password reset (unchanged)
+# ---------------------------------------------------------------------------
 
 @router.post("/forgot-password")
 async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
@@ -125,8 +217,3 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(
     user.password_reset_expires = None
 
     return {"message": "Password updated successfully. You can now log in."}
-
-
-@router.get("/me", response_model=UserResponse)
-async def me(current_user: User = Depends(get_current_user)):
-    return current_user

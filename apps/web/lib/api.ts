@@ -1,11 +1,9 @@
-import { getToken } from "./auth";
-
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
 export interface User {
-  id: string; email: string; display_name: string; ig_username: string | null; created_at: string;
+  id: string; email: string; display_name: string; role?: string; ig_username: string | null; created_at: string;
 }
 
 export type PageType = "own" | "reference";
@@ -130,10 +128,9 @@ async function req<T>(endpoint: string, opts: FetchOpts = {}): Promise<T> {
     if (qs) url += `?${qs}`;
   }
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(init.headers as Record<string, string>) };
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  // No Authorization header — httpOnly cookies are sent automatically
   if (init.body instanceof FormData) delete headers["Content-Type"];
-  const res = await fetch(url, { ...init, headers });
+  const res = await fetch(url, { ...init, headers, credentials: "include" });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     let msg = res.statusText;
@@ -150,12 +147,18 @@ async function req<T>(endpoint: string, opts: FetchOpts = {}): Promise<T> {
 export const api = {
   auth: {
     register(data: { email: string; password: string; display_name: string }) {
-      return req<{ access_token: string }>("/api/auth/register", { method: "POST", body: JSON.stringify(data) });
+      return req<{ user: { id: string; email: string; display_name: string; role: string } }>("/api/auth/register", { method: "POST", body: JSON.stringify(data) });
     },
     login(data: { email: string; password: string }) {
-      return req<{ access_token: string }>("/api/auth/login", { method: "POST", body: JSON.stringify(data) });
+      return req<{ user: { id: string; email: string; display_name: string; role: string } }>("/api/auth/login", { method: "POST", body: JSON.stringify(data) });
     },
-    me() { return req<User>("/api/auth/me"); },
+    logout() {
+      return req<{ message: string }>("/api/auth/logout", { method: "POST" });
+    },
+    refresh() {
+      return req<{ user: { id: string; email: string; display_name: string; role: string } }>("/api/auth/refresh", { method: "POST" });
+    },
+    me() { return req<{ id: string; email: string; display_name: string; role: string }>("/api/auth/me"); },
     forgotPassword(email: string) {
       return req<{ message: string }>("/api/auth/forgot-password", {
         method: "POST",
@@ -243,11 +246,8 @@ export const api = {
     render(id: string) { return req<{ job_id: string }>(`/api/exports/${id}/render`, { method: "POST" }); },
     getStatus(id: string) { return req<UserExport>(`/api/exports/${id}/status`); },
     downloadUrl(id: string) {
-      // Browsers can't set headers on window.open, so pass the JWT as a
-      // query param. The backend accepts either Authorization header or
-      // ?token= for this endpoint.
-      const t = getToken();
-      return `${API_BASE}/api/exports/${id}/download${t ? `?token=${encodeURIComponent(t)}` : ""}`;
+      // Cookies are sent automatically — no need to append ?token=
+      return `${API_BASE}/api/exports/${id}/download`;
     },
   },
 

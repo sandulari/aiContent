@@ -19,11 +19,21 @@ class UserResponse(BaseModel):
     id: UUID
     email: str
     display_name: str
+    role: str = "user"
     created_at: datetime
 
     model_config = {"from_attributes": True}
 
 
+class AuthUserResponse(BaseModel):
+    """Returned inside the { user: ... } wrapper from auth endpoints."""
+    id: UUID
+    email: str
+    display_name: str
+    role: str
+
+
 class TokenResponse(BaseModel):
+    """Legacy — kept for schema compatibility but no longer used by new auth."""
     access_token: str
     token_type: str = "bearer"

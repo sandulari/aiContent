@@ -3,7 +3,7 @@ import re as _re
 from io import BytesIO
 from typing import Any, Dict, List
 from uuid import UUID, uuid4
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -443,28 +443,29 @@ def _sanitize_filename(name: str | None, export_id: UUID) -> str:
 async def download_export(
     export_id: UUID,
     token: str | None = None,
-    authorization: str | None = None,
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     """Stream the rendered MP4. User must own the export.
 
-    Accepts JWT either as a standard `Authorization: Bearer` header
-    or as a `?token=` query param — browsers can't set headers on
-    `window.open()` downloads, so the frontend passes the token as
-    a query string.
+    Auth priority:
+    1. httpOnly access_token cookie (new system)
+    2. ?token= query param (legacy / browser window.open fallback)
     """
-    from middleware.auth import verify_token
-    from fastapi import Header
+    from fastapi import Request as _Req
+    from middleware.auth import verify_access_token
 
-    raw_token = token
+    # Try cookie first, then query param fallback
+    raw_token = None
+    if request:
+        raw_token = request.cookies.get("access_token")
     if not raw_token:
-        # fallback: check explicit Header (we could also parse authorization
-        # via Depends, but we want the endpoint to accept either style)
-        pass
+        raw_token = token
+
     try:
         if not raw_token:
-            raise HTTPException(status_code=401, detail="Missing auth token")
-        payload = verify_token(raw_token)
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        payload = verify_access_token(raw_token)
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid token")

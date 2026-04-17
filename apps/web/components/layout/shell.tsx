@@ -3,7 +3,6 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Sidebar } from "./sidebar";
-import { getToken, removeToken } from "@/lib/auth";
 import { api } from "@/lib/api";
 
 export function Shell({ children }: { children: React.ReactNode }) {
@@ -22,13 +21,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const token = getToken();
-    if (!token) {
-      router.replace("/auth/login");
-      setAuthChecked(true);
-      return;
-    }
-
     // Only verify the token ONCE — not on every navigation
     if (authVerified.current) {
       setIsAuthed(true);
@@ -42,10 +34,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
         setIsAuthed(true);
         setAuthChecked(true);
       })
-      .catch(() => {
-        removeToken();
-        router.replace("/auth/login");
-        setAuthChecked(true);
+      .catch(async () => {
+        // Access token expired — try refresh
+        try {
+          await api.auth.refresh();
+          authVerified.current = true;
+          setIsAuthed(true);
+          setAuthChecked(true);
+        } catch {
+          // Refresh also failed — truly not authenticated
+          setAuthChecked(true);
+          router.replace("/auth/login");
+        }
       });
   }, [pathname, isPublicPage, router]);
 

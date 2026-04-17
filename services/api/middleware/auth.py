@@ -1,87 +1,88 @@
-import os
 import hashlib
 import hmac
+import os
 import secrets
-from datetime import datetime, timedelta, timezone
+import warnings
+from datetime import datetime, timezone, timedelta
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from jose import jwt, JWTError
+from fastapi import Depends, HTTPException, Request, Response
 
-from db.session import get_db
-from models.user import User
-
-SECRET_KEY = os.getenv("JWT_SECRET")
-if not SECRET_KEY:
-    SECRET_KEY = "dev-only-insecure-secret-do-not-use-in-production"
-    import warnings
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    JWT_SECRET = "dev-only-insecure-secret-do-not-use-in-production"
     warnings.warn("JWT_SECRET not set — using insecure development default", stacklevel=1)
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRATION_HOURS", "24")) * 60
 
-security = HTTPBearer()
+ACCESS_TOKEN_MINUTES = 15
+REFRESH_TOKEN_DAYS = 7
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # None = current domain
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() == "true"
 
+
+# ---------------------------------------------------------------------------
+# Password hashing (PBKDF2)
+# ---------------------------------------------------------------------------
 
 def hash_password(password: str) -> str:
-    salt = secrets.token_hex(16)
-    h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100000)
-    return f"{salt}${h.hex()}"
+    salt = os.urandom(16)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000)
+    return f"{salt.hex()}${key.hex()}"
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
+def verify_password(password: str, stored: str) -> bool:
     try:
-        salt, stored_hash = hashed_password.split("$", 1)
-        h = hashlib.pbkdf2_hmac("sha256", plain_password.encode(), salt.encode(), 100000)
-        return hmac.compare_digest(h.hex(), stored_hash)
+        salt_hex, key_hex = stored.split("$")
+        salt = bytes.fromhex(salt_hex)
+        key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000)
+        return hmac.compare_digest(key.hex(), key_hex)
     except (ValueError, AttributeError):
         return False
 
 
-def create_access_token(user_id: UUID) -> str:
-    now = datetime.now(timezone.utc)
-    expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+# ---------------------------------------------------------------------------
+# Access token (short-lived JWT in httpOnly cookie)
+# ---------------------------------------------------------------------------
+
+def create_access_token(user_id: UUID, role: str = "user") -> str:
     payload = {
         "sub": str(user_id),
-        "exp": expire,
-        "iat": now,
+        "role": role,
+        "type": "access",
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_MINUTES),
+        "iat": datetime.now(timezone.utc),
     }
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 
-def verify_token(token: str) -> dict:
+def verify_access_token(token: str) -> dict:
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Invalid token type")
         return payload
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    except JWTError as exc:
+        # jose wraps expiry under JWTError; check message for specifics
+        msg = str(exc).lower()
+        if "expired" in msg:
+            raise HTTPException(status_code=401, detail="Token expired")
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_db),
-) -> User:
-    payload = verify_token(credentials.credentials)
-    user_id = payload.get("sub")
-    if user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
-        )
-    result = await db.execute(select(User).where(User.id == UUID(user_id)))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-        )
-    return user
+# ---------------------------------------------------------------------------
+# Refresh token (long-lived random string, stored hashed in DB)
+# ---------------------------------------------------------------------------
+
+def create_refresh_token() -> tuple[str, str, datetime]:
+    """Returns (raw_token, hashed_token, expires_at)."""
+    raw = secrets.token_hex(32)
+    hashed = hashlib.sha256(raw.encode()).hexdigest()
+    expires = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_DAYS)
+    return raw, hashed, expires
+
+
+def hash_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -98,3 +99,75 @@ def create_reset_token() -> tuple[str, str]:
 def hash_reset_token(raw_token: str) -> str:
     """Hash a raw reset token for comparison with the stored hash."""
     return hashlib.sha256(raw_token.encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Cookie helpers
+# ---------------------------------------------------------------------------
+
+def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
+    """Set httpOnly cookies for both tokens."""
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        domain=COOKIE_DOMAIN,
+        max_age=ACCESS_TOKEN_MINUTES * 60,
+        path="/",
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        domain=COOKIE_DOMAIN,
+        max_age=REFRESH_TOKEN_DAYS * 86400,
+        path="/api/auth",  # Only sent to auth endpoints
+    )
+
+
+def clear_auth_cookies(response: Response):
+    response.delete_cookie("access_token", path="/", domain=COOKIE_DOMAIN)
+    response.delete_cookie("refresh_token", path="/api/auth", domain=COOKIE_DOMAIN)
+
+
+# ---------------------------------------------------------------------------
+# Auth dependency — reads from httpOnly cookie (or ?token= query param fallback)
+# ---------------------------------------------------------------------------
+
+async def get_current_user(request: Request, db=None):
+    """Extract the current user from the access_token httpOnly cookie.
+
+    Falls back to a ``?token=`` query param so browser-initiated downloads
+    (window.open) still work.
+    """
+    token = request.cookies.get("access_token")
+    if not token:
+        # Fallback: ?token= query param (used by download endpoints)
+        token = request.query_params.get("token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    payload = verify_access_token(token)
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    from db.session import get_db as _get_db, async_session
+    from models.user import User
+    from sqlalchemy import select
+
+    if db is None:
+        async with async_session() as session:
+            result = await session.execute(select(User).where(User.id == UUID(user_id)))
+            user = result.scalar_one_or_none()
+    else:
+        result = await db.execute(select(User).where(User.id == UUID(user_id)))
+        user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user

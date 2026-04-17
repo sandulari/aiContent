@@ -1,20 +1,17 @@
-const TOKEN_KEY = "vre_auth_token";
+// Auth tokens are now stored in httpOnly cookies — JavaScript cannot
+// (and should not) read them.  These functions are kept as no-ops for
+// any call-sites that haven't been cleaned up yet.
 
 export function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(TOKEN_KEY);
+  return null;
 }
 
-export function setToken(token: string): void {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(TOKEN_KEY, token);
-}
+export function setToken(_token: string): void {}
 
-export function removeToken(): void {
-  if (typeof window === "undefined") return;
-  localStorage.removeItem(TOKEN_KEY);
-}
+export function removeToken(): void {}
 
 export function isAuthenticated(): boolean {
-  return getToken() !== null;
+  // We can't read httpOnly cookies from JS (that's the point).
+  // Shell will verify authentication on mount via /api/auth/me.
+  return true;
 }

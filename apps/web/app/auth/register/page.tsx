@@ -4,7 +4,6 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, ApiError } from "@/lib/api";
-import { setToken } from "@/lib/auth";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -17,8 +16,7 @@ export default function RegisterPage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault(); setError(""); setLoading(true);
     try {
-      const reg = await api.auth.register({ email, display_name: name, password });
-      setToken(reg.access_token);
+      await api.auth.register({ email, display_name: name, password });
       router.push("/onboarding");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");

@@ -71,6 +71,20 @@ MIGRATION_STATEMENTS: list[str] = [
     ALTER TABLE users
     ADD COLUMN IF NOT EXISTS password_reset_expires TIMESTAMPTZ
     """,
+    # users: role column for RBAC
+    """
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'user'
+    """,
+    # users: refresh token (hashed) + expiry for httpOnly cookie auth
+    """
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS refresh_token VARCHAR(64)
+    """,
+    """
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS refresh_token_expires TIMESTAMPTZ
+    """,
 ]
 
 

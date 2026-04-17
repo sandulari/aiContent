@@ -4,7 +4,6 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, ApiError } from "@/lib/api";
-import { setToken } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -16,8 +15,7 @@ export default function LoginPage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault(); setError(""); setLoading(true);
     try {
-      const res = await api.auth.login({ email, password });
-      setToken(res.access_token);
+      await api.auth.login({ email, password });
       router.push("/dashboard");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Invalid credentials");

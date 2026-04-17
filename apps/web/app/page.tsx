@@ -2,18 +2,17 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { getToken } from "@/lib/auth";
+import { api } from "@/lib/api";
 
 export default function HomePage() {
   const router = useRouter();
 
   useEffect(() => {
-    // If logged in, go to dashboard. If not, go to login.
-    if (getToken()) {
-      router.replace("/dashboard");
-    } else {
-      router.replace("/auth/login");
-    }
+    // Try to verify auth via cookie — if it works, go to dashboard.
+    // If not, go to login.
+    api.auth.me()
+      .then(() => router.replace("/dashboard"))
+      .catch(() => router.replace("/auth/login"));
   }, [router]);
 
   return (

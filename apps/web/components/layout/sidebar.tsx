@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import clsx from "clsx";
+import { api } from "@/lib/api";
 
 const nav = [
   { label: "Dashboard", href: "/dashboard", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1" },
@@ -52,7 +53,7 @@ export function Sidebar() {
       </nav>
 
       <div className="px-3 py-4 border-t border-[#151515]">
-        <button onClick={() => { localStorage.removeItem("vre_auth_token"); router.push("/auth/login"); }}
+        <button onClick={async () => { try { await api.auth.logout(); } catch {} router.push("/auth/login"); }}
           className="flex items-center gap-2.5 px-3 py-2 text-[12px] font-medium text-[#333] hover:text-[#f87171] rounded-xl transition-colors w-full tracking-wide">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
