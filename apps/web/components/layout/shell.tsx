@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Sidebar } from "./sidebar";
 import { getToken, removeToken } from "@/lib/auth";
 import { api } from "@/lib/api";
@@ -11,12 +11,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
+  const authVerified = useRef(false);
 
   const isPublicPage = pathname === "/" || pathname.startsWith("/auth") || pathname.startsWith("/onboarding");
   const isEditorPage = pathname.startsWith("/editor");
 
   useEffect(() => {
-    // Public pages don't need auth check
     if (isPublicPage) {
       setAuthChecked(true);
       return;
@@ -24,20 +24,25 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
     const token = getToken();
     if (!token) {
-      // No token — go to login
       router.replace("/auth/login");
       setAuthChecked(true);
       return;
     }
 
-    // Validate token with API
+    // Only verify the token ONCE — not on every navigation
+    if (authVerified.current) {
+      setIsAuthed(true);
+      setAuthChecked(true);
+      return;
+    }
+
     api.auth.me()
       .then(() => {
+        authVerified.current = true;
         setIsAuthed(true);
         setAuthChecked(true);
       })
       .catch(() => {
-        // Token is invalid/expired — clear and redirect
         removeToken();
         router.replace("/auth/login");
         setAuthChecked(true);
