@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Loading } from "@/components/shared/loading";
+import { SkeletonSettings } from "@/components/shared/skeleton";
 import { api, UserPage, PageType } from "@/lib/api";
 
 export default function SettingsPage() {
@@ -57,7 +58,7 @@ export default function SettingsPage() {
     setRemovingId(null);
   };
 
-  if (loading) return <div className="p-8"><Loading size="lg" className="py-20" /></div>;
+  if (loading) return <SkeletonSettings />;
 
   const ownPages = pages.filter((p) => p.page_type === "own");
   const refPages = pages.filter((p) => p.page_type === "reference");

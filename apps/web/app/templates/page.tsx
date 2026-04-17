@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Loading } from "@/components/shared/loading";
+import { Skeleton, SkeletonCard } from "@/components/shared/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { api, Template } from "@/lib/api";
 import { Canvas } from "@/components/editor/Canvas";
@@ -326,7 +327,7 @@ export default function TemplatesPage() {
   };
 
   if (loading) {
-    return <div className="p-8"><Loading size="lg" className="py-20" /></div>;
+    return <div className="flex h-[calc(100vh-0px)]"><div className="w-56 border-r border-[#21262d] p-3 space-y-2">{[1,2,3].map(i => <Skeleton key={i} className="h-9 w-full rounded-lg" />)}</div><div className="flex-1 flex items-center justify-center"><Skeleton className="w-[360px] h-[640px] rounded-xl" /></div><div className="w-72 border-l border-[#21262d] p-3 space-y-3">{[1,2,3,4,5].map(i => <Skeleton key={i} className="h-8 w-full rounded-lg" />)}</div></div>;
   }
 
   const selectedLayer = selectedLayerId

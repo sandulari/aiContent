@@ -513,7 +513,7 @@ export function Canvas({
 
           return (
             <div
-              key={layerId}
+              key={`${layerId}-${p.fontFamily || 'Inter'}`}
               onMouseDown={(e) => {
                 if (isEditing) return;
                 startDrag(e, layerId, "move");

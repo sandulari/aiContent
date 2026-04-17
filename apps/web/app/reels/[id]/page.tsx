@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Loading } from "@/components/shared/loading";
+import { Skeleton, SkeletonText } from "@/components/shared/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { api, ReelDetail, ReelSource, Template } from "@/lib/api";
 import { formatViews, formatDuration, formatDate } from "@/lib/utils";
@@ -134,7 +135,7 @@ export default function ReelDetailPage() {
     }
   };
 
-  if (loading) return <div className="p-8"><Loading size="lg" className="py-20" /></div>;
+  if (loading) return <div className="p-6 max-w-5xl mx-auto space-y-5"><Skeleton className="h-4 w-16" /><div className="bg-[#161b22] border border-[#21262d] rounded-2xl p-6 space-y-4"><Skeleton className="h-6 w-64" /><SkeletonText lines={3} /><div className="flex gap-4"><Skeleton className="h-10 w-32 rounded-lg" /><Skeleton className="h-10 w-32 rounded-lg" /></div></div></div>;
   if (!reel) return <div className="p-8"><EmptyState title="Reel not found" actionLabel="Go Back" onAction={() => router.back()} /></div>;
 
   const hasSources = reel.sources.length > 0;

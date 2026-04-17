@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Loading } from "@/components/shared/loading";
+import { SkeletonDashboard } from "@/components/shared/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { api, UserPage, WeeklyDashboard, UserExport } from "@/lib/api";
 import { formatViews, formatDate } from "@/lib/utils";
@@ -95,7 +96,7 @@ export default function DashboardPage() {
     }, 3000);
   };
 
-  if (loading) return <div className="p-8"><Loading size="lg" className="py-20" /></div>;
+  if (loading) return <SkeletonDashboard />;
 
   if (ownPages.length === 0) {
     return (

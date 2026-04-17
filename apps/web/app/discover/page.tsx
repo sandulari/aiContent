@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Loading } from "@/components/shared/loading";
+import { SkeletonDiscover } from "@/components/shared/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { api, UserPage, Recommendation, RecommendationSummary } from "@/lib/api";
 import { formatViews, formatDuration, formatDate } from "@/lib/utils";
@@ -121,7 +122,7 @@ export default function DiscoverPage() {
     }
   };
 
-  if (loading) return <div className="p-8"><Loading size="lg" className="py-20" /></div>;
+  if (loading) return <SkeletonDiscover />;
 
   if (pages.length === 0) {
     return (
