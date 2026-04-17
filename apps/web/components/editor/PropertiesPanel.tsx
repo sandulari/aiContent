@@ -14,13 +14,22 @@ interface PropertiesPanelProps {
   onUpdateProps: (layerId: string, props: Record<string, any>) => void;
 }
 
-// Only fonts available in both the browser (Google Fonts) AND the
-// worker image (apt packages). DejaVu Sans removed — it's server-only.
 const FONTS = [
   { value: "Inter", label: "Inter" },
   { value: "Roboto", label: "Roboto" },
   { value: "Open Sans", label: "Open Sans" },
   { value: "Lato", label: "Lato" },
+  { value: "Poppins", label: "Poppins" },
+  { value: "Montserrat", label: "Montserrat" },
+  { value: "Oswald", label: "Oswald" },
+  { value: "Playfair Display", label: "Playfair Display" },
+  { value: "Bebas Neue", label: "Bebas Neue" },
+  { value: "Raleway", label: "Raleway" },
+  { value: "Nunito", label: "Nunito" },
+  { value: "Anton", label: "Anton" },
+  { value: "DM Sans", label: "DM Sans" },
+  { value: "Space Grotesk", label: "Space Grotesk" },
+  { value: "Outfit", label: "Outfit" },
 ];
 
 const WEIGHTS = [
