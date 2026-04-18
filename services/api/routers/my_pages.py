@@ -694,6 +694,15 @@ async def get_dashboard(
         top_reel=top_reel,
         daily_snapshots=_build_daily(current_reels, start_date, end_date),
         has_data=len(current_reels) > 0 or followers > 0,
+        reels=[{
+            "ig_code": r.ig_code,
+            "ig_url": f"https://www.instagram.com/reel/{r.ig_code}/",
+            "posted_at": r.posted_at.isoformat() if r.posted_at else None,
+            "view_count": r.view_count or 0,
+            "like_count": r.like_count or 0,
+            "comment_count": r.comment_count or 0,
+            "caption": r.caption,
+        } for r in sorted(current_reels, key=lambda r: r.view_count or 0, reverse=True)],
     )
 
 

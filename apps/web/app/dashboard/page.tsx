@@ -734,6 +734,40 @@ export default function DashboardPage() {
               </div>
             )}
 
+            {/* All reels in period */}
+            {d?.reels && d.reels.length > 0 && (
+              <div className="mb-8">
+                <h2 className="text-sm font-medium text-[#e6edf3] mb-3">
+                  Reels in This Period
+                  <span className="ml-2 text-[#484f58] font-normal">({d.reels.length})</span>
+                </h2>
+                <div className="bg-[#161b22] border border-[#21262d] rounded-xl overflow-hidden">
+                  <div className="grid grid-cols-[1fr_80px_80px_80px_100px] gap-2 px-4 py-2.5 border-b border-[#21262d] text-[10px] text-[#484f58] uppercase tracking-wider font-medium">
+                    <span>Caption</span>
+                    <span className="text-right">Views</span>
+                    <span className="text-right">Likes</span>
+                    <span className="text-right">Comments</span>
+                    <span className="text-right">Posted</span>
+                  </div>
+                  {d.reels.map((reel, i) => (
+                    <a
+                      key={reel.ig_code}
+                      href={reel.ig_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`grid grid-cols-[1fr_80px_80px_80px_100px] gap-2 px-4 py-3 items-center hover:bg-[#1c2129] transition-colors ${i !== d.reels!.length - 1 ? "border-b border-[#21262d]/50" : ""}`}
+                    >
+                      <span className="text-xs text-[#e6edf3] truncate">{reel.caption || "Untitled"}</span>
+                      <span className="text-xs text-[#e6edf3] text-right font-medium tabular-nums">{formatNumber(reel.view_count)}</span>
+                      <span className="text-xs text-[#e6edf3] text-right tabular-nums">{formatNumber(reel.like_count)}</span>
+                      <span className="text-xs text-[#7d8590] text-right tabular-nums">{formatNumber(reel.comment_count)}</span>
+                      <span className="text-[10px] text-[#484f58] text-right">{reel.posted_at ? formatDate(reel.posted_at) : "—"}</span>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Recent exports */}
             {exports.length > 0 && (
               <div>

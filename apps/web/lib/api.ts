@@ -77,6 +77,15 @@ export interface DashboardData {
     comments: number;
   }[];
   has_data: boolean;
+  reels?: {
+    ig_code: string;
+    ig_url: string;
+    posted_at: string | null;
+    view_count: number;
+    like_count: number;
+    comment_count: number;
+    caption: string | null;
+  }[];
 }
 
 export interface RecommendationSummary {
