@@ -611,10 +611,11 @@ async def get_dashboard(
     comp_start = comp_end - timedelta(days=period_days - 1)
 
     # Convert to datetimes
-    start_dt = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
-    end_dt = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=timezone.utc)
-    comp_start_dt = datetime.combine(comp_start, datetime.min.time()).replace(tzinfo=timezone.utc)
-    comp_end_dt = datetime.combine(comp_end, datetime.max.time()).replace(tzinfo=timezone.utc)
+    # Use naive datetimes — DB columns are TIMESTAMP WITHOUT TIME ZONE
+    start_dt = datetime.combine(start_date, datetime.min.time())
+    end_dt = datetime.combine(end_date, datetime.max.time())
+    comp_start_dt = datetime.combine(comp_start, datetime.min.time())
+    comp_end_dt = datetime.combine(comp_end, datetime.max.time())
 
     # --- Current period: reels posted in date range ----------------------
     current_result = await db.execute(
