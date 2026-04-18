@@ -272,6 +272,12 @@ export const api = {
     refreshStats(pageId: string) {
       return req<{ status: string; task_id: string }>(`/api/my-pages/${pageId}/refresh-stats`, { method: "POST" });
     },
+    saveIntegration(provider: string, apiKey: string) {
+      return req<{ status: string }>(`/api/my-pages/integrations/${provider}`, {
+        method: "POST",
+        body: JSON.stringify({ api_key: apiKey }),
+      });
+    },
   },
 
   recommendations: {

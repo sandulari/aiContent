@@ -709,6 +709,32 @@ async def get_dashboard(
     )
 
 
+@router.post("/integrations/{provider}", status_code=200)
+async def save_integration(
+    provider: str,
+    body: dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save an integration API key (e.g. ManyChat)."""
+    if provider not in ("manychat",):
+        raise HTTPException(status_code=400, detail="Unknown integration provider")
+
+    api_key = body.get("api_key", "")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API key is required")
+
+    # Store in user's record (add integration_keys JSONB column)
+    # For now, store in a simple way
+    current_user.ig_session_data = current_user.ig_session_data or {}
+    if not isinstance(current_user.ig_session_data, dict):
+        current_user.ig_session_data = {}
+    current_user.ig_session_data[f"{provider}_api_key"] = api_key
+    await db.flush()
+
+    return {"status": "connected", "provider": provider}
+
+
 @router.post("/{page_id}/refresh-stats", status_code=status.HTTP_202_ACCEPTED)
 async def refresh_stats_now(
     page_id: UUID,

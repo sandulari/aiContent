@@ -16,6 +16,9 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [manychatKey, setManychatKey] = useState("");
+  const [manychatConnected, setManychatConnected] = useState(false);
+  const [savingManychat, setSavingManychat] = useState(false);
 
   const fetchPages = useCallback(async () => {
     try {
@@ -56,6 +59,17 @@ export default function SettingsPage() {
       setError(e?.message || "Failed to remove page. Please try again.");
     }
     setRemovingId(null);
+  };
+
+  const handleSaveManychat = async () => {
+    setSavingManychat(true);
+    try {
+      await api.myPages.saveIntegration("manychat", manychatKey.trim());
+      setManychatConnected(true);
+    } catch (e: any) {
+      setError(e?.message || "Failed to save ManyChat key.");
+    }
+    setSavingManychat(false);
   };
 
   if (loading) return <SkeletonSettings />;
@@ -161,6 +175,45 @@ export default function SettingsPage() {
               ))}
             </div>
           )}
+        </Card>
+      </div>
+
+      {/* ManyChat Integration */}
+      <div>
+        <h2 className="text-sm font-medium text-[#e6edf3] mb-3">
+          Integrations
+        </h2>
+        <Card>
+          <div className="space-y-4">
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-6 h-6 rounded bg-[#2B54E1] flex items-center justify-center">
+                  <span className="text-[8px] font-bold text-white">MC</span>
+                </div>
+                <span className="text-sm font-medium text-[#e6edf3]">ManyChat</span>
+                {manychatKey ? (
+                  <span className="text-[10px] text-[#3fb950] bg-[#3fb950]/10 px-1.5 py-0.5 rounded">Connected</span>
+                ) : (
+                  <span className="text-[10px] text-[#484f58] bg-[#21262d] px-1.5 py-0.5 rounded">Not connected</span>
+                )}
+              </div>
+              <p className="text-[11px] text-[#484f58] mb-3">
+                Connect your ManyChat account to track new leads and subscribers on your dashboard.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  placeholder="ManyChat API Key"
+                  value={manychatKey}
+                  onChange={(e) => setManychatKey(e.target.value)}
+                  className="flex-1 h-9 px-3 text-sm bg-[#0d1117] text-[#e6edf3] border border-[#21262d] rounded-lg focus:outline-none focus:border-[#58a6ff]"
+                />
+                <Button onClick={handleSaveManychat} loading={savingManychat} disabled={!manychatKey.trim()}>
+                  {manychatConnected ? "Update" : "Connect"}
+                </Button>
+              </div>
+            </div>
+          </div>
         </Card>
       </div>
     </div>

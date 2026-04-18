@@ -735,12 +735,13 @@ export default function DashboardPage() {
           <>
             {/* Primary stat cards row */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-              <StatCard
-                label="Followers"
-                value={d?.followers ?? 0}
-                delta={d?.followers_delta ?? null}
-                deltaPct={d?.followers_delta_pct ?? null}
-              />
+              <div className="bg-[#161b22] border border-[#21262d] rounded-xl p-5">
+                <p className="text-[11px] text-[#7d8590] uppercase tracking-wider mb-2">New Followers</p>
+                <p className="text-2xl font-bold text-[#e6edf3] tabular-nums">
+                  {d?.followers_delta != null ? (d.followers_delta >= 0 ? `+${formatNumber(d.followers_delta)}` : formatNumber(d.followers_delta)) : "—"}
+                </p>
+                <p className="text-[11px] text-[#484f58] mt-1.5">Total: {formatNumber(d?.followers ?? 0)}</p>
+              </div>
               <StatCard
                 label="Views"
                 value={d?.views ?? 0}
@@ -774,6 +775,11 @@ export default function DashboardPage() {
                 delta={d?.engagement_delta ?? null}
                 format="percent"
               />
+              <div className="bg-[#161b22] border border-[#21262d] rounded-xl p-5">
+                <p className="text-[11px] text-[#7d8590] uppercase tracking-wider mb-2">New Leads</p>
+                <p className="text-2xl font-bold text-[#e6edf3] tabular-nums">—</p>
+                <p className="text-[11px] text-[#484f58] mt-1.5">Connect ManyChat in Settings</p>
+              </div>
             </div>
 
             {/* Top performing reel */}
