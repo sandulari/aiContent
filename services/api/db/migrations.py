@@ -85,6 +85,25 @@ MIGRATION_STATEMENTS: list[str] = [
     ALTER TABLE users
     ADD COLUMN IF NOT EXISTS refresh_token_expires TIMESTAMPTZ
     """,
+    # user_page_reels: cached reel data for date-range dashboard queries
+    """
+    CREATE TABLE IF NOT EXISTS user_page_reels (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_page_id UUID NOT NULL REFERENCES user_pages(id) ON DELETE CASCADE,
+        ig_code VARCHAR(50) NOT NULL,
+        posted_at TIMESTAMPTZ,
+        view_count BIGINT DEFAULT 0,
+        like_count BIGINT DEFAULT 0,
+        comment_count BIGINT DEFAULT 0,
+        caption TEXT,
+        scraped_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_page_id, ig_code)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_user_page_reels_page_posted
+    ON user_page_reels(user_page_id, posted_at DESC)
+    """,
 ]
 
 
