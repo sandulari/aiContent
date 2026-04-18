@@ -567,6 +567,27 @@ async def get_dashboard(
     """
     page = await _get_owned_page(page_id, current_user, db)
 
+    def _build_daily(reels, start: date, end: date) -> list:
+        """Build per-day breakdown from reels for charting."""
+        from collections import defaultdict
+        daily = defaultdict(lambda: {"views": 0, "likes": 0, "comments": 0, "posts": 0})
+        for r in reels:
+            if r.posted_at:
+                day = r.posted_at.date().isoformat() if hasattr(r.posted_at, 'date') else str(r.posted_at)[:10]
+                daily[day]["views"] += r.view_count or 0
+                daily[day]["likes"] += r.like_count or 0
+                daily[day]["comments"] += r.comment_count or 0
+                daily[day]["posts"] += 1
+        # Fill in all dates in range (even days with no posts)
+        result = []
+        current = start
+        while current <= end:
+            d = current.isoformat()
+            entry = daily.get(d, {"views": 0, "likes": 0, "comments": 0, "posts": 0})
+            result.append({"date": d, **entry})
+            current += timedelta(days=1)
+        return result
+
     # --- Parse dates -----------------------------------------------------
     try:
         end_date = date.fromisoformat(to_date) if to_date else date.today()
@@ -671,7 +692,7 @@ async def get_dashboard(
         engagement_rate=engagement_rate,
         engagement_delta=None,
         top_reel=top_reel,
-        daily_snapshots=[],
+        daily_snapshots=_build_daily(current_reels, start_date, end_date),
         has_data=len(current_reels) > 0 or followers > 0,
     )
 

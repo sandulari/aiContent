@@ -52,50 +52,67 @@ async def get_profile(username: str) -> dict | None:
         return None
 
 
-async def get_user_reels(user_id: str | int) -> list[dict]:
-    """Get reels for a user by their numeric user_id (pk)."""
+async def get_user_reels(user_id: str | int, max_pages: int = 5) -> list[dict]:
+    """Get reels for a user with pagination. Fetches up to max_pages * 12 reels."""
+    all_reels = []
+    max_id = ""
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            resp = await _request_with_retry(client, "GET", f"{BASE_URL}/reels", params={"user_id": str(user_id)}, headers=HEADERS)
-            if not resp or resp.status_code != 200:
-                logger.warning("Reels fetch failed for user %s: HTTP %s", user_id, resp.status_code if resp else "no response")
-                return []
-            data = resp.json()
-            items = data.get("data", {}).get("items", [])
+            for page in range(max_pages):
+                params = {"user_id": str(user_id)}
+                if max_id:
+                    params["max_id"] = max_id
 
-            reels = []
-            for item in items:
-                media = item.get("media", item)
-                code = media.get("code", "")
-                if not code:
-                    continue
+                resp = await _request_with_retry(client, "GET", f"{BASE_URL}/reels", params=params, headers=HEADERS)
+                if not resp or resp.status_code != 200:
+                    logger.warning("Reels fetch failed for user %s page %d: HTTP %s", user_id, page, resp.status_code if resp else "no response")
+                    break
 
-                # Get thumbnail
-                thumb = ""
-                iv = media.get("image_versions2", {})
-                candidates = iv.get("candidates", []) if isinstance(iv, dict) else []
-                if candidates:
-                    thumb = candidates[0].get("url", "")
+                data = resp.json()
+                items = data.get("data", {}).get("items", [])
+                paging = data.get("data", {}).get("paging_info", {})
 
-                # Get caption
-                cap_obj = media.get("caption", {})
-                caption = cap_obj.get("text", "") if isinstance(cap_obj, dict) else ""
+                for item in items:
+                    media = item.get("media", item)
+                    code = media.get("code", "")
+                    if not code:
+                        continue
 
-                reels.append({
-                    "shortcode": code,
-                    "url": f"https://www.instagram.com/reel/{code}/",
-                    "thumbnail_url": thumb,
-                    "view_count": media.get("play_count", 0) or media.get("view_count", 0) or 0,
-                    "like_count": media.get("like_count", 0) or 0,
-                    "comment_count": media.get("comment_count", 0) or 0,
-                    "duration_seconds": media.get("video_duration", 0) or 0,
-                    "caption": caption[:500],
-                    "taken_at": media.get("taken_at", 0),
-                })
-            return reels
+                    thumb = ""
+                    iv = media.get("image_versions2", {})
+                    candidates = iv.get("candidates", []) if isinstance(iv, dict) else []
+                    if candidates:
+                        thumb = candidates[0].get("url", "")
+
+                    cap_obj = media.get("caption", {})
+                    caption = cap_obj.get("text", "") if isinstance(cap_obj, dict) else ""
+
+                    all_reels.append({
+                        "shortcode": code,
+                        "url": f"https://www.instagram.com/reel/{code}/",
+                        "thumbnail_url": thumb,
+                        "view_count": media.get("play_count", 0) or media.get("view_count", 0) or 0,
+                        "like_count": media.get("like_count", 0) or 0,
+                        "comment_count": media.get("comment_count", 0) or 0,
+                        "duration_seconds": media.get("video_duration", 0) or 0,
+                        "caption": caption[:500],
+                        "taken_at": media.get("taken_at", 0),
+                    })
+
+                if not paging.get("more_available"):
+                    break
+                max_id = paging.get("max_id", "")
+                if not max_id:
+                    break
+
+                # Small delay between pages to avoid rate limits
+                import asyncio
+                await asyncio.sleep(1)
+
+            logger.info("Fetched %d reels for user %s (%d pages)", len(all_reels), user_id, page + 1)
     except Exception as e:
         logger.error("Reels fetch error for user %s: %s", user_id, e)
-        return []
+    return all_reels
 
 
 async def get_suggested_accounts(user_id: str | int) -> list[dict]:
