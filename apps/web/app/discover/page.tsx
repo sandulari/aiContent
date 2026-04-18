@@ -22,8 +22,8 @@ export default function DiscoverPage() {
   const [loadingRecs, setLoadingRecs] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [sortBy, setSortBy] = useState<SortBy>("score");
-  const [minViews, setMinViews] = useState<number>(500_000);
-  const [pageSize] = useState<number>(60);
+  const [minViews, setMinViews] = useState<number>(0);
+  const [pageSize] = useState<number>(100);
   const [offset, setOffset] = useState<number>(0);
   const [hasMore, setHasMore] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -172,10 +172,12 @@ export default function DiscoverPage() {
             onChange={(e) => setMinViews(Number(e.target.value))}
             className="h-9 px-3 text-sm bg-[#161b22] text-[#e6edf3] border border-[#21262d] rounded-lg"
           >
+            <option value={0}>All views</option>
+            <option value={10000}>10K+ views</option>
+            <option value={50000}>50K+ views</option>
+            <option value={100000}>100K+ views</option>
             <option value={500000}>500K+ views</option>
             <option value={1000000}>1M+ views</option>
-            <option value={250000}>250K+ views</option>
-            <option value={0}>Any views</option>
           </select>
           <select
             value={sortBy}
@@ -200,10 +202,10 @@ export default function DiscoverPage() {
             </div>
             {stillBuilding ? (
               <span className="text-[11px] text-[#f0a500]">
-                Still building your pool — target {summary.target_min}+
+                Still building your pool — target 500+
               </span>
             ) : (
-              <span className="text-[11px] text-[#3fb950]">Pool hits target ✓</span>
+              <span className="text-[11px] text-[#3fb950]">{summary.total} reels available</span>
             )}
           </div>
         </Card>
@@ -231,7 +233,11 @@ export default function DiscoverPage() {
                   alt=""
                   className="w-full h-full object-cover"
                   loading="lazy"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    target.style.display = "none";
+                    target.parentElement!.classList.add("bg-gradient-to-br", "from-[#21262d]", "to-[#161b22]");
+                  }}
                 />
                 <div className="absolute top-2 left-2 flex gap-1.5">
                   <span className="bg-black/75 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">
@@ -288,8 +294,8 @@ export default function DiscoverPage() {
 
       {/* Load more */}
       {!loadingRecs && recs.length > 0 && hasMore && (
-        <div className="flex justify-center py-6">
-          <Button size="md" variant="secondary" onClick={loadMore} loading={loadingMore}>
+        <div className="flex justify-center py-8">
+          <Button size="lg" variant="secondary" onClick={loadMore} loading={loadingMore} className="px-8">
             Load more reels
           </Button>
         </div>
