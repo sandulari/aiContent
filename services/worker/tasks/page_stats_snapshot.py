@@ -5,15 +5,16 @@ gained WoW, engagement delta.
 """
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 
+import httpx
+
 from celery_app import app
 from lib.db import get_session
-from lib.instagram import scrape_profile
-from lib.theme_page_eval import _fetch_profile_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -23,46 +24,90 @@ def _week_key(moment: datetime) -> str:
     return f"{iso.year}-W{iso.week:02d}"
 
 
-def _snapshot_one_page(user_page_id: str, ig_username: str) -> dict | None:
-    meta = _fetch_profile_metadata(ig_username)
-    followers = meta.get("followers")
-    following = None  # _fetch_profile_metadata doesn't expose this
-    posts = meta.get("posts")
+RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY", "")
+RAPIDAPI_HOST = "instagram-api-fast-reliable-data-scraper.p.rapidapi.com"
 
-    reels = []
+
+def _rapidapi_get(endpoint: str, params: dict) -> dict | None:
+    """Call RapidAPI Instagram scraper."""
+    if not RAPIDAPI_KEY:
+        logger.warning("RAPIDAPI_KEY not set — skipping scrape")
+        return None
     try:
-        reels = scrape_profile(ig_username, max_posts=30)
+        resp = httpx.get(
+            f"https://{RAPIDAPI_HOST}/{endpoint}",
+            params=params,
+            headers={
+                "x-rapidapi-key": RAPIDAPI_KEY,
+                "x-rapidapi-host": RAPIDAPI_HOST,
+                "Content-Type": "application/json",
+            },
+            timeout=20,
+        )
+        if resp.status_code != 200:
+            logger.warning("RapidAPI %s returned %d", endpoint, resp.status_code)
+            return None
+        return resp.json()
     except Exception as exc:
-        logger.warning("scrape_profile failed for @%s: %s", ig_username, exc)
+        logger.warning("RapidAPI %s error: %s", endpoint, exc)
+        return None
+
+
+def _snapshot_one_page(user_page_id: str, ig_username: str) -> dict | None:
+    # Fetch profile via RapidAPI
+    profile = _rapidapi_get("profile", {"username": ig_username})
+    followers = profile.get("follower_count") or profile.get("followers") if profile else None
+    following = profile.get("following_count") or profile.get("following") if profile else None
+    posts = profile.get("media_count") or profile.get("posts_count") if profile else None
+    user_pk = profile.get("pk") or profile.get("id") if profile else None
+
+    # Fetch reels via RapidAPI
+    reels_raw = []
+    if user_pk:
+        reels_data = _rapidapi_get("reels", {"user_id": str(user_pk)})
+        if reels_data:
+            items = reels_data.get("data", {}).get("items", [])
+            for item in items:
+                media = item.get("media", item)
+                code = media.get("code", "")
+                if not code:
+                    continue
+                view_count = media.get("play_count") or media.get("view_count") or 0
+                like_count = media.get("like_count", 0)
+                comment_count = media.get("comment_count", 0)
+                taken_at = media.get("taken_at")
+                caption_text = ""
+                cap = media.get("caption")
+                if isinstance(cap, dict):
+                    caption_text = cap.get("text", "")
+                elif isinstance(cap, str):
+                    caption_text = cap
+                reels_raw.append({
+                    "video_id": code,
+                    "url": f"https://www.instagram.com/reel/{code}/",
+                    "view_count": int(view_count),
+                    "like_count": int(like_count),
+                    "comment_count": int(comment_count),
+                    "caption": caption_text,
+                    "posted_at": datetime.fromtimestamp(taken_at, tz=timezone.utc) if taken_at else None,
+                })
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    week_reels = [r for r in reels_raw if r.get("posted_at") is None or r["posted_at"] >= cutoff]
 
-    def _in_week(reel) -> bool:
-        if not reel.posted_at:
-            return True
-        try:
-            parsed = datetime.fromisoformat(reel.posted_at.replace("Z", "+00:00"))
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed >= cutoff
-        except Exception:
-            return False
-
-    week_reels = [r for r in reels if _in_week(r)]
-
-    total_views = sum(r.view_count for r in week_reels)
-    total_likes = sum(r.like_count for r in week_reels)
-    total_comments = sum(r.comment_count for r in week_reels)
+    total_views = sum(r["view_count"] for r in week_reels)
+    total_likes = sum(r["like_count"] for r in week_reels)
+    total_comments = sum(r["comment_count"] for r in week_reels)
 
     top_reel = None
-    if reels:
-        top = max(reels, key=lambda r: (r.view_count, r.like_count))
+    if reels_raw:
+        top = max(reels_raw, key=lambda r: (r["view_count"], r["like_count"]))
         top_reel = {
-            "ig_video_id": top.video_id,
-            "ig_url": top.url,
-            "view_count": top.view_count,
-            "like_count": top.like_count,
-            "caption": (top.caption or "")[:500],
+            "ig_video_id": top["video_id"],
+            "ig_url": top["url"],
+            "view_count": top["view_count"],
+            "like_count": top["like_count"],
+            "caption": (top["caption"] or "")[:500],
         }
 
     now = datetime.now(timezone.utc)
