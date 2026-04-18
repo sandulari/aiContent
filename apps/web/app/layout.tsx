@@ -43,6 +43,11 @@ const fontVars = [
 export const metadata = {
   title: "Shadow Pages",
   description: "Your content engine for Instagram theme pages",
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+    apple: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({
