@@ -227,22 +227,31 @@ export default function DiscoverPage() {
               key={rec.id}
               className="bg-[#161b22] border border-[#21262d] rounded-xl overflow-hidden hover:border-[#30363d] transition-all group"
             >
-              <div className="relative aspect-video bg-gradient-to-br from-[#1c2129] via-[#161b22] to-[#0d1117] overflow-hidden flex flex-col justify-between p-3">
-                {/* Caption preview as thumbnail replacement */}
-                <p className="text-[11px] text-[#8b949e] leading-relaxed line-clamp-4 flex-1">
-                  {rec.caption || "Viral Reel"}
-                </p>
-                <div className="flex items-end justify-between mt-2">
-                  <div className="flex gap-1.5">
-                    <span className="bg-black/50 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">
-                      {formatViews(rec.view_count)} views
+              <div className="relative aspect-video bg-[#0d1117] overflow-hidden">
+                {/* Thumbnail from Instagram's public media endpoint */}
+                {(() => {
+                  const code = rec.ig_url?.match(/\/reel\/([^/]+)/)?.[1] || rec.ig_url?.match(/\/p\/([^/]+)/)?.[1];
+                  const thumbUrl = code ? `https://www.instagram.com/p/${code}/media/?size=m` : "";
+                  return thumbUrl ? (
+                    <img
+                      src={thumbUrl}
+                      alt=""
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : null;
+                })()}
+                <div className="absolute top-2 left-2 flex gap-1.5">
+                  <span className="bg-black/75 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">
+                    {formatViews(rec.view_count)} views
+                  </span>
+                  {rec.duration_seconds && (
+                    <span className="bg-black/75 text-white text-[10px] px-1.5 py-0.5 rounded">
+                      {formatDuration(rec.duration_seconds)}
                     </span>
-                    {rec.duration_seconds && (
-                      <span className="bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded">
-                        {formatDuration(rec.duration_seconds)}
-                      </span>
-                    )}
-                  </div>
+                  )}
+                </div>
+                <div className="absolute top-2 right-2">
                   <span className="bg-[#0f2e16]/90 text-[#3fb950] text-[10px] font-semibold px-1.5 py-0.5 rounded">
                     {Math.round(rec.match_score * 100)}%
                   </span>
