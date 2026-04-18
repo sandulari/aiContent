@@ -114,6 +114,11 @@ def _snapshot_one_page(user_page_id: str, ig_username: str) -> dict | None:
             "caption": (top["caption"] or "")[:500],
         }
 
+    # Don't save empty snapshots — if profile fetch failed, skip
+    if followers is None:
+        logger.warning("Skipping snapshot for @%s — profile data unavailable", ig_username)
+        return None
+
     now = datetime.now(timezone.utc)
     snapshot_id = str(uuid.uuid4())
 
