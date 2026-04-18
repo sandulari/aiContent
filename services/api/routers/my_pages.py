@@ -670,6 +670,36 @@ async def get_dashboard(
             return None
         return round((curr - prev) / prev * 100, 1)
 
+    # --- Follower delta from page_snapshots ---
+    # Get the most recent snapshot (current followers) and the oldest snapshot
+    # that's at least `period_days` old (previous followers) for comparison
+    followers_delta = None
+    followers_delta_pct = None
+    latest_snap_result = await db.execute(
+        select(PageSnapshot.follower_count)
+        .where(PageSnapshot.user_page_id == page_id, PageSnapshot.follower_count.isnot(None))
+        .order_by(PageSnapshot.taken_at.desc())
+        .limit(1)
+    )
+    latest_followers = latest_snap_result.scalar()
+    if latest_followers:
+        followers = latest_followers
+
+    prev_snap_result = await db.execute(
+        select(PageSnapshot.follower_count)
+        .where(
+            PageSnapshot.user_page_id == page_id,
+            PageSnapshot.follower_count.isnot(None),
+            PageSnapshot.taken_at <= start_dt,
+        )
+        .order_by(PageSnapshot.taken_at.desc())
+        .limit(1)
+    )
+    prev_followers = prev_snap_result.scalar()
+    if latest_followers and prev_followers:
+        followers_delta = latest_followers - prev_followers
+        followers_delta_pct = _pct(latest_followers, prev_followers)
+
     return DashboardResponse(
         page_id=str(page.id),
         ig_username=page.ig_username,
@@ -679,8 +709,8 @@ async def get_dashboard(
             "days": period_days,
         },
         followers=followers,
-        followers_delta=None,
-        followers_delta_pct=None,
+        followers_delta=followers_delta,
+        followers_delta_pct=followers_delta_pct,
         views=views,
         views_delta=_delta(views, comp_views) if comp_reels else None,
         views_delta_pct=_pct(views, comp_views) if comp_reels else None,
