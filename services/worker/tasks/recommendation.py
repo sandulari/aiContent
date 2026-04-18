@@ -36,9 +36,9 @@ logger = logging.getLogger(__name__)
 #   1 ref page → 200 recs
 #   2 ref pages → 300 recs
 #   cap → 500 recs
-BASE_RECS = 100
-PER_REF_RECS = 100
-MAX_RECS = 500
+BASE_RECS = 500
+PER_REF_RECS = 200
+MAX_RECS = 1000
 
 VIEW_FLOORS = [500_000, 250_000, 100_000, 50_000, 0]
 # Number of top candidates we feed to Claude for re-ranking. More =
