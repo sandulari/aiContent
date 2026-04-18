@@ -278,7 +278,7 @@ async def add_page(
                 page.ig_display_name = profile["full_name"]
             if profile.get("profile_pic_url"):
                 page.ig_profile_pic_url = profile["profile_pic_url"]
-            page.last_scraped_at = datetime.now(timezone.utc)
+            page.last_scraped_at = datetime.utcnow()
             user_pk = profile.get("pk")
             if user_pk:
                 reels = await get_user_reels(str(user_pk))
@@ -301,7 +301,7 @@ async def add_page(
                         like_count=int(reel.get("like_count", 0)),
                         comment_count=int(reel.get("comment_count", 0)),
                         caption=str(caption)[:500] if caption else None,
-                        scraped_at=datetime.now(timezone.utc),
+                        scraped_at=datetime.utcnow(),
                     ))
             await db.commit()
             await db.refresh(page)
@@ -697,7 +697,7 @@ async def refresh_stats_now(
         page.ig_display_name = profile.get("full_name")
         if profile.get("profile_pic_url"):
             page.ig_profile_pic_url = profile["profile_pic_url"]
-        page.last_scraped_at = datetime.now(timezone.utc)
+        page.last_scraped_at = datetime.utcnow()
         user_pk = profile.get("pk")
 
     # Scrape reels
@@ -735,7 +735,7 @@ async def refresh_stats_now(
                 existing_reel.view_count = int(view_count)
                 existing_reel.like_count = int(like_count)
                 existing_reel.comment_count = int(comment_count)
-                existing_reel.scraped_at = datetime.now(timezone.utc)
+                existing_reel.scraped_at = datetime.utcnow()
                 if posted_at:
                     existing_reel.posted_at = posted_at
             else:
@@ -747,7 +747,7 @@ async def refresh_stats_now(
                     like_count=int(like_count),
                     comment_count=int(comment_count),
                     caption=str(caption)[:500] if caption else None,
-                    scraped_at=datetime.now(timezone.utc),
+                    scraped_at=datetime.utcnow(),
                 ))
             reels_count += 1
 
