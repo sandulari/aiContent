@@ -251,7 +251,8 @@ function DateRangePicker({
                 </span>
                 <button
                   onClick={nextMonth}
-                  className="w-7 h-7 flex items-center justify-center rounded-md text-[#7d8590] hover:bg-[#21262d] hover:text-[#e6edf3] transition-colors"
+                  disabled={displayYear === now.getFullYear() && displayMonth === now.getMonth()}
+                  className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors ${displayYear === now.getFullYear() && displayMonth === now.getMonth() ? "text-[#21262d] cursor-not-allowed" : "text-[#7d8590] hover:bg-[#21262d] hover:text-[#e6edf3]"}`}
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -276,10 +277,11 @@ function DateRangePicker({
                   const isSelected = isStart || isEnd;
                   const isInRange = isBetween(day.date, rangeStart, rangeEnd);
                   const isToday = sameDay(day.date, todayDate);
+                  const isFuture = day.date.getTime() > new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate() + 1).getTime() - 1;
 
-                  // Connected range strip: bg spans full cell width, rounded only on start/end edges
+                  // Connected range strip
                   const stripBg = isInRange || isStart || isEnd
-                    ? isStart && isEnd ? "" // single day
+                    ? isStart && isEnd ? ""
                     : isStart ? "bg-[#d4a843]/10 rounded-l-lg"
                     : isEnd ? "bg-[#d4a843]/10 rounded-r-lg"
                     : "bg-[#d4a843]/10"
@@ -288,11 +290,13 @@ function DateRangePicker({
                   return (
                     <div key={i} className={`relative flex items-center justify-center ${stripBg} transition-all duration-200`}>
                       <button
-                        onClick={() => handleDayClick(day.date)}
+                        onClick={() => !isFuture && handleDayClick(day.date)}
+                        disabled={isFuture}
                         className={[
                           "w-9 h-9 text-sm rounded-lg transition-all duration-200 relative z-10",
-                          !day.inMonth ? "text-[#30363d]" : "",
-                          day.inMonth && !isSelected && !isInRange ? "text-[#e6edf3] hover:bg-[#21262d]" : "",
+                          isFuture ? "text-[#21262d] cursor-not-allowed" : "",
+                          !day.inMonth && !isFuture ? "text-[#30363d]" : "",
+                          day.inMonth && !isSelected && !isInRange && !isFuture ? "text-[#e6edf3] hover:bg-[#21262d]" : "",
                           isStart ? "bg-[#d4a843] text-[#0d1117] font-bold shadow-lg shadow-[#d4a843]/25" : "",
                           isEnd ? "bg-[#d4a843] text-[#0d1117] font-bold shadow-lg shadow-[#d4a843]/25" : "",
                           isInRange && !isStart && !isEnd ? "text-[#d4a843] font-medium" : "",
