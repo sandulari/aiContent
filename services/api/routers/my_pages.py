@@ -117,6 +117,9 @@ class DashboardResponse(BaseModel):
     # For charting
     daily_snapshots: list = []  # [{ date, followers, views, likes, comments }]
 
+    # Individual reels in the period
+    reels: list = []  # [{ ig_code, ig_url, posted_at, view_count, like_count, comment_count, caption }]
+
     has_data: bool = False
 
 
