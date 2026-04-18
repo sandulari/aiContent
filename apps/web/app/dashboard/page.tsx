@@ -52,6 +52,46 @@ const DATE_RANGES: DateRangePreset[] = [
   { label: "Custom", getValue: null },
 ];
 
+// ── Calendar helpers ────────────────────────────────────────────────────
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+const DAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+
+function getCalendarDays(year: number, month: number) {
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysInPrevMonth = new Date(year, month, 0).getDate();
+
+  const days: { date: Date; inMonth: boolean }[] = [];
+
+  for (let i = firstDay - 1; i >= 0; i--) {
+    days.push({ date: new Date(year, month - 1, daysInPrevMonth - i), inMonth: false });
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    days.push({ date: new Date(year, month, d), inMonth: true });
+  }
+  const remaining = 42 - days.length;
+  for (let d = 1; d <= remaining; d++) {
+    days.push({ date: new Date(year, month + 1, d), inMonth: false });
+  }
+  return days;
+}
+
+function sameDay(a: Date | null, b: Date | null): boolean {
+  if (!a || !b) return false;
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function isBetween(d: Date, start: Date | null, end: Date | null): boolean {
+  if (!start || !end) return false;
+  const t = d.getTime();
+  return t > start.getTime() && t < end.getTime();
+}
+
 // ── DateRangePicker ─────────────────────────────────────────────────────
 
 function DateRangePicker({
@@ -63,9 +103,15 @@ function DateRangePicker({
 }) {
   const [open, setOpen] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState(1); // default "Last 7 days"
-  const [customFrom, setCustomFrom] = useState(value.from);
-  const [customTo, setCustomTo] = useState(value.to);
   const ref = useRef<HTMLDivElement>(null);
+
+  // Calendar state
+  const now = new Date();
+  const [displayMonth, setDisplayMonth] = useState(now.getMonth());
+  const [displayYear, setDisplayYear] = useState(now.getFullYear());
+  const [rangeStart, setRangeStart] = useState<Date | null>(null);
+  const [rangeEnd, setRangeEnd] = useState<Date | null>(null);
+  const [pickingState, setPickingState] = useState<"start" | "end">("start");
 
   // close on outside click
   useEffect(() => {
@@ -84,16 +130,76 @@ function DateRangePicker({
     if (preset.getValue) {
       const r = preset.getValue();
       onChange(r);
+      setRangeStart(null);
+      setRangeEnd(null);
+      setPickingState("start");
+      setOpen(false);
+    }
+    // If "Custom" (getValue is null), just show the calendar
+  }
+
+  function prevMonth() {
+    if (displayMonth === 0) {
+      setDisplayMonth(11);
+      setDisplayYear(displayYear - 1);
+    } else {
+      setDisplayMonth(displayMonth - 1);
+    }
+  }
+
+  function nextMonth() {
+    if (displayMonth === 11) {
+      setDisplayMonth(0);
+      setDisplayYear(displayYear + 1);
+    } else {
+      setDisplayMonth(displayMonth + 1);
+    }
+  }
+
+  function handleDayClick(date: Date) {
+    if (pickingState === "start") {
+      setRangeStart(date);
+      setRangeEnd(null);
+      setPickingState("end");
+    } else {
+      // If clicked date is before start, swap
+      let start = rangeStart!;
+      let end = date;
+      if (end.getTime() < start.getTime()) {
+        const tmp = start;
+        start = end;
+        end = tmp;
+      }
+      setRangeStart(start);
+      setRangeEnd(end);
+      setPickingState("start");
+      setSelectedIdx(4); // "Custom"
+      onChange({ from: toISODate(start), to: toISODate(end) });
       setOpen(false);
     }
   }
 
-  function applyCustom() {
-    if (customFrom && customTo) {
-      onChange({ from: customFrom, to: customTo });
-      setOpen(false);
+  function applyQuickAction(preset: "today" | "yesterday" | "last7") {
+    let r: DateRange;
+    if (preset === "today") {
+      r = { from: today(), to: today() };
+      setSelectedIdx(0);
+    } else if (preset === "yesterday") {
+      r = { from: daysAgo(1), to: daysAgo(1) };
+      setSelectedIdx(4);
+    } else {
+      r = { from: daysAgo(7), to: today() };
+      setSelectedIdx(1);
     }
+    onChange(r);
+    setRangeStart(null);
+    setRangeEnd(null);
+    setPickingState("start");
+    setOpen(false);
   }
+
+  const calendarDays = getCalendarDays(displayYear, displayMonth);
+  const todayDate = new Date();
 
   return (
     <div className="relative" ref={ref}>
@@ -111,7 +217,8 @@ function DateRangePicker({
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 z-50 w-64 bg-[#161b22] border border-[#21262d] rounded-xl shadow-2xl shadow-black/40 overflow-hidden">
+        <div className="absolute right-0 top-full mt-1.5 z-50 w-72 bg-[#161b22] border border-[#21262d] rounded-xl shadow-2xl shadow-black/40 overflow-hidden">
+          {/* Preset buttons */}
           {DATE_RANGES.map((preset, idx) => (
             <button
               key={preset.label}
@@ -126,33 +233,91 @@ function DateRangePicker({
             </button>
           ))}
 
-          {/* Custom date inputs */}
+          {/* Calendar (shown when Custom is selected) */}
           {selectedIdx === 4 && (
-            <div className="px-4 py-3 border-t border-[#21262d] space-y-2">
-              <div>
-                <label className="text-[10px] text-[#484f58] uppercase tracking-wider">From</label>
-                <input
-                  type="date"
-                  value={customFrom}
-                  onChange={(e) => setCustomFrom(e.target.value)}
-                  className="w-full h-8 px-2 text-sm bg-[#0d1117] text-[#e6edf3] border border-[#21262d] rounded-md mt-0.5 focus:outline-none focus:border-[#58a6ff]"
-                />
+            <div className="border-t border-[#21262d] px-3 pt-3 pb-2">
+              {/* Month header */}
+              <div className="flex items-center justify-between mb-2">
+                <button
+                  onClick={prevMonth}
+                  className="w-7 h-7 flex items-center justify-center rounded-md text-[#7d8590] hover:bg-[#21262d] hover:text-[#e6edf3] transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <span className="text-sm font-medium text-[#e6edf3]">
+                  {MONTH_NAMES[displayMonth]} {displayYear}
+                </span>
+                <button
+                  onClick={nextMonth}
+                  className="w-7 h-7 flex items-center justify-center rounded-md text-[#7d8590] hover:bg-[#21262d] hover:text-[#e6edf3] transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
               </div>
-              <div>
-                <label className="text-[10px] text-[#484f58] uppercase tracking-wider">To</label>
-                <input
-                  type="date"
-                  value={customTo}
-                  onChange={(e) => setCustomTo(e.target.value)}
-                  className="w-full h-8 px-2 text-sm bg-[#0d1117] text-[#e6edf3] border border-[#21262d] rounded-md mt-0.5 focus:outline-none focus:border-[#58a6ff]"
-                />
+
+              {/* Day labels */}
+              <div className="grid grid-cols-7 mb-1">
+                {DAY_LABELS.map((dl) => (
+                  <div key={dl} className="w-9 h-6 flex items-center justify-center text-[10px] font-medium text-[#484f58] uppercase">
+                    {dl}
+                  </div>
+                ))}
               </div>
-              <button
-                onClick={applyCustom}
-                className="w-full h-8 text-sm font-medium bg-[#1f6feb] text-white rounded-md hover:bg-[#388bfd] transition-colors mt-1"
-              >
-                Apply
-              </button>
+
+              {/* Day grid */}
+              <div className="grid grid-cols-7">
+                {calendarDays.map((day, i) => {
+                  const isStart = sameDay(day.date, rangeStart);
+                  const isEnd = sameDay(day.date, rangeEnd);
+                  const isSelected = isStart || isEnd;
+                  const isInRange = isBetween(day.date, rangeStart, rangeEnd);
+                  const isToday = sameDay(day.date, todayDate);
+
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => handleDayClick(day.date)}
+                      className={[
+                        "w-9 h-9 text-sm rounded-full transition-colors",
+                        !day.inMonth ? "text-[#484f58]" : "",
+                        day.inMonth && !isSelected && !isInRange ? "text-[#e6edf3] hover:bg-[#21262d]" : "",
+                        isStart ? "bg-[#d4a843] text-[#0d1117] font-bold" : "",
+                        isEnd ? "bg-[#d4a843] text-[#0d1117] font-bold" : "",
+                        isInRange && !isStart && !isEnd ? "bg-[#d4a843]/10 text-[#d4a843]" : "",
+                        isToday && !isSelected ? "ring-1 ring-[#484f58]" : "",
+                      ].filter(Boolean).join(" ")}
+                    >
+                      {day.date.getDate()}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Quick actions */}
+              <div className="flex items-center gap-3 pt-2 mt-1 border-t border-[#21262d]">
+                <button
+                  onClick={() => applyQuickAction("today")}
+                  className="text-xs text-[#7d8590] hover:text-[#e6edf3] transition-colors"
+                >
+                  Today
+                </button>
+                <button
+                  onClick={() => applyQuickAction("yesterday")}
+                  className="text-xs text-[#7d8590] hover:text-[#e6edf3] transition-colors"
+                >
+                  Yesterday
+                </button>
+                <button
+                  onClick={() => applyQuickAction("last7")}
+                  className="text-xs text-[#7d8590] hover:text-[#e6edf3] transition-colors"
+                >
+                  Last 7 days
+                </button>
+              </div>
             </div>
           )}
         </div>
