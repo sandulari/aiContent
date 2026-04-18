@@ -41,6 +41,44 @@ export interface WeeklyDashboard {
   snapshots_available: number;
 }
 
+export interface DashboardData {
+  page_id: string;
+  ig_username: string;
+  period: { from_date: string; to_date: string; days: number };
+  followers: number | null;
+  followers_delta: number | null;
+  followers_delta_pct: number | null;
+  views: number | null;
+  views_delta: number | null;
+  views_delta_pct: number | null;
+  likes: number | null;
+  likes_delta: number | null;
+  likes_delta_pct: number | null;
+  comments: number | null;
+  comments_delta: number | null;
+  comments_delta_pct: number | null;
+  posts_count: number | null;
+  posts_delta: number | null;
+  engagement_rate: number | null;
+  engagement_delta: number | null;
+  top_reel: {
+    ig_video_id: string;
+    ig_url: string | null;
+    view_count: number;
+    like_count: number;
+    caption: string | null;
+    posted_at: string | null;
+  } | null;
+  daily_snapshots: {
+    date: string;
+    followers: number;
+    views: number;
+    likes: number;
+    comments: number;
+  }[];
+  has_data: boolean;
+}
+
 export interface RecommendationSummary {
   total: number;
   at_least_500k: number;
@@ -191,6 +229,9 @@ export const api = {
     },
     getRecommendationsSummary(pageId: string) {
       return req<RecommendationSummary>(`/api/my-pages/${pageId}/recommendations/summary`);
+    },
+    getDashboard(pageId: string, params?: { from_date?: string; to_date?: string }) {
+      return req<DashboardData>(`/api/my-pages/${pageId}/dashboard`, { params: params as any });
     },
     getWeeklyDashboard(pageId: string) {
       return req<WeeklyDashboard>(`/api/my-pages/${pageId}/weekly-dashboard`);

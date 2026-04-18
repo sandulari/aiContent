@@ -1,6 +1,8 @@
 """Instagram pages a user has connected — both their own pages and
 reference pages they want to draw inspiration from."""
+import logging
 import re
+from datetime import date, datetime, timedelta
 from typing import List, Literal, Optional
 from uuid import UUID
 
@@ -15,6 +17,8 @@ from models.page_profile import PageProfile
 from models.page_snapshot import PageSnapshot
 from models.user import User
 from models.user_page import UserPage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/my-pages", tags=["my-pages"])
 
@@ -77,6 +81,42 @@ class WeeklyDashboardResponse(BaseModel):
     engagement_rate_delta: float | None = None
     top_reel: dict | None = None
     snapshots_available: int = 0
+
+
+class DashboardResponse(BaseModel):
+    page_id: str
+    ig_username: str
+    period: dict  # { from_date: str, to_date: str, days: int }
+
+    # Current period stats
+    followers: int | None = None
+    followers_delta: int | None = None
+    followers_delta_pct: float | None = None
+
+    views: int | None = None
+    views_delta: int | None = None
+    views_delta_pct: float | None = None
+
+    likes: int | None = None
+    likes_delta: int | None = None
+    likes_delta_pct: float | None = None
+
+    comments: int | None = None
+    comments_delta: int | None = None
+    comments_delta_pct: float | None = None
+
+    posts_count: int | None = None
+    posts_delta: int | None = None
+
+    engagement_rate: float | None = None  # (likes + comments) / followers * 100
+    engagement_delta: float | None = None
+
+    top_reel: dict | None = None  # { ig_video_id, ig_url, view_count, like_count, caption, posted_at }
+
+    # For charting
+    daily_snapshots: list = []  # [{ date, followers, views, likes, comments }]
+
+    has_data: bool = False
 
 
 @router.get("", response_model=List[PageResponse])
@@ -190,14 +230,18 @@ async def add_page(
 
     await db.commit()
 
-    import logging
-
-    logger = logging.getLogger(__name__)
     try:
-        from celery_client import trigger_analyze_page
+        from celery_client import trigger_analyze_page, trigger_page_stats_snapshot
 
         # Queue the new page first so its own analysis starts.
         trigger_analyze_page(page.id)
+
+        # Also trigger a stats snapshot immediately so new pages have
+        # dashboard data right away.
+        try:
+            trigger_page_stats_snapshot(page.id)
+        except Exception as exc:
+            logger.warning("Failed to enqueue initial snapshot for @%s: %s", username, exc)
 
         # Explicitly queue re-analysis for every surviving sibling.
         # The API owns this cascade (not the worker's internal fan-out)
@@ -267,9 +311,6 @@ async def remove_page(
 
     # Re-analyze every surviving page asynchronously so each one picks
     # up a fresh Claude profile reflecting the new sibling set.
-    import logging
-
-    logger = logging.getLogger(__name__)
     try:
         from celery_client import trigger_analyze_page
 
@@ -441,6 +482,226 @@ async def get_weekly_dashboard(
     )
 
 
+def _pct_change(current: int | None, previous: int | None) -> float | None:
+    """Return percentage change from previous to current, or None."""
+    if current is None or previous is None:
+        return None
+    if previous == 0:
+        return None
+    return round((current - previous) / previous * 100, 2)
+
+
+@router.get("/{page_id}/dashboard", response_model=DashboardResponse)
+async def get_dashboard(
+    page_id: UUID,
+    from_date: Optional[str] = Query(None, description="Start date YYYY-MM-DD, default 7 days ago"),
+    to_date: Optional[str] = Query(None, description="End date YYYY-MM-DD, default today"),
+    compare: bool = Query(True, description="Include comparison period"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Date-range-aware dashboard for a user's own page.
+
+    Returns aggregated stats for the requested period with optional
+    comparison to the immediately preceding period of the same length.
+    """
+    # --- Resolve the page ------------------------------------------------
+    result = await db.execute(
+        select(UserPage).where(
+            UserPage.id == page_id, UserPage.user_id == current_user.id
+        )
+    )
+    page = result.scalar_one_or_none()
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    if page.page_type != "own":
+        raise HTTPException(
+            status_code=400,
+            detail="Dashboard is only available for your own pages",
+        )
+
+    # --- Parse dates -----------------------------------------------------
+    today = date.today()
+    try:
+        end_date = date.fromisoformat(to_date) if to_date else today
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid to_date format, use YYYY-MM-DD")
+    try:
+        start_date = date.fromisoformat(from_date) if from_date else (end_date - timedelta(days=7))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid from_date format, use YYYY-MM-DD")
+
+    if start_date > end_date:
+        raise HTTPException(status_code=400, detail="from_date must be before to_date")
+
+    period_days = (end_date - start_date).days or 1
+
+    # Comparison period: same length, immediately preceding
+    comp_end = start_date
+    comp_start = comp_end - timedelta(days=period_days)
+
+    # Convert to datetimes for DB queries (end is inclusive, so go to end of day)
+    period_start_dt = datetime.combine(start_date, datetime.min.time())
+    period_end_dt = datetime.combine(end_date, datetime.max.time())
+    comp_start_dt = datetime.combine(comp_start, datetime.min.time())
+    comp_end_dt = datetime.combine(comp_end, datetime.max.time())
+
+    # --- Fetch snapshots for the current period --------------------------
+    snap_result = await db.execute(
+        select(PageSnapshot)
+        .where(
+            PageSnapshot.user_page_id == page_id,
+            PageSnapshot.taken_at >= period_start_dt,
+            PageSnapshot.taken_at <= period_end_dt,
+        )
+        .order_by(PageSnapshot.taken_at.asc())
+    )
+    current_snaps = snap_result.scalars().all()
+
+    # --- No data at all --------------------------------------------------
+    if not current_snaps:
+        return DashboardResponse(
+            page_id=str(page.id),
+            ig_username=page.ig_username,
+            period={
+                "from_date": start_date.isoformat(),
+                "to_date": end_date.isoformat(),
+                "days": period_days,
+            },
+            has_data=False,
+            followers=page.follower_count or 0,
+            views=0,
+            likes=0,
+            comments=0,
+            posts_count=0,
+            engagement_rate=0.0,
+            daily_snapshots=[],
+            top_reel=None,
+        )
+
+    # --- Aggregate current period ----------------------------------------
+    latest_snap = current_snaps[-1]
+    current_followers = latest_snap.follower_count
+    current_views = sum(s.total_views_week or 0 for s in current_snaps)
+    current_likes = sum(s.total_likes_week or 0 for s in current_snaps)
+    current_comments = sum(s.total_comments_week or 0 for s in current_snaps)
+    current_posts = latest_snap.total_posts
+
+    engagement_rate: float | None = None
+    if current_followers and current_followers > 0:
+        engagement_rate = round(
+            (current_likes + current_comments) / current_followers * 100, 2
+        )
+
+    # Top reel: highest views across snapshots in the period
+    top_reel = None
+    best_views = -1
+    for s in current_snaps:
+        if s.top_reel_ig_id and (s.top_reel_views or 0) > best_views:
+            best_views = s.top_reel_views or 0
+            top_reel = {
+                "ig_video_id": s.top_reel_ig_id,
+                "ig_url": s.top_reel_url,
+                "view_count": s.top_reel_views,
+                "like_count": s.top_reel_likes,
+                "caption": s.top_reel_caption,
+                "posted_at": str(s.taken_at) if s.taken_at else None,
+            }
+
+    # Daily snapshots for charting
+    daily_snapshots = []
+    for s in current_snaps:
+        daily_snapshots.append({
+            "date": s.taken_at.date().isoformat() if s.taken_at else None,
+            "followers": s.follower_count,
+            "views": s.total_views_week,
+            "likes": s.total_likes_week,
+            "comments": s.total_comments_week,
+        })
+
+    # --- Comparison period -----------------------------------------------
+    followers_delta: int | None = None
+    followers_delta_pct: float | None = None
+    views_delta: int | None = None
+    views_delta_pct: float | None = None
+    likes_delta: int | None = None
+    likes_delta_pct: float | None = None
+    comments_delta: int | None = None
+    comments_delta_pct: float | None = None
+    posts_delta: int | None = None
+    engagement_delta: float | None = None
+
+    if compare:
+        comp_result = await db.execute(
+            select(PageSnapshot)
+            .where(
+                PageSnapshot.user_page_id == page_id,
+                PageSnapshot.taken_at >= comp_start_dt,
+                PageSnapshot.taken_at <= comp_end_dt,
+            )
+            .order_by(PageSnapshot.taken_at.asc())
+        )
+        comp_snaps = comp_result.scalars().all()
+
+        if comp_snaps:
+            comp_latest = comp_snaps[-1]
+            comp_followers = comp_latest.follower_count
+            comp_views = sum(s.total_views_week or 0 for s in comp_snaps)
+            comp_likes = sum(s.total_likes_week or 0 for s in comp_snaps)
+            comp_comments = sum(s.total_comments_week or 0 for s in comp_snaps)
+            comp_posts = comp_latest.total_posts
+
+            followers_delta = _safe_sub(current_followers, comp_followers)
+            followers_delta_pct = _pct_change(current_followers, comp_followers)
+
+            views_delta = _safe_sub(current_views, comp_views)
+            views_delta_pct = _pct_change(current_views, comp_views)
+
+            likes_delta = _safe_sub(current_likes, comp_likes)
+            likes_delta_pct = _pct_change(current_likes, comp_likes)
+
+            comments_delta = _safe_sub(current_comments, comp_comments)
+            comments_delta_pct = _pct_change(current_comments, comp_comments)
+
+            posts_delta = _safe_sub(current_posts, comp_posts)
+
+            if comp_followers and comp_followers > 0:
+                comp_engagement = round(
+                    (comp_likes + comp_comments) / comp_followers * 100, 2
+                )
+                if engagement_rate is not None:
+                    engagement_delta = round(engagement_rate - comp_engagement, 2)
+
+    return DashboardResponse(
+        page_id=str(page.id),
+        ig_username=page.ig_username,
+        period={
+            "from_date": start_date.isoformat(),
+            "to_date": end_date.isoformat(),
+            "days": period_days,
+        },
+        has_data=True,
+        followers=current_followers,
+        followers_delta=followers_delta,
+        followers_delta_pct=followers_delta_pct,
+        views=current_views,
+        views_delta=views_delta,
+        views_delta_pct=views_delta_pct,
+        likes=current_likes,
+        likes_delta=likes_delta,
+        likes_delta_pct=likes_delta_pct,
+        comments=current_comments,
+        comments_delta=comments_delta,
+        comments_delta_pct=comments_delta_pct,
+        posts_count=current_posts,
+        posts_delta=posts_delta,
+        engagement_rate=engagement_rate,
+        engagement_delta=engagement_delta,
+        top_reel=top_reel,
+        daily_snapshots=daily_snapshots,
+    )
+
+
 @router.post("/{page_id}/refresh-stats", status_code=status.HTTP_202_ACCEPTED)
 async def refresh_stats_now(
     page_id: UUID,
@@ -465,4 +726,29 @@ async def refresh_stats_now(
     from celery_client import trigger_page_stats_snapshot
 
     task_id = trigger_page_stats_snapshot(page.id)
+
+    # Also do an in-process profile refresh so the dashboard shows
+    # updated followers immediately, even before the full snapshot completes.
+    try:
+        from services.instagram_api import get_profile
+
+        profile_data = await get_profile(page.ig_username)
+        if profile_data:
+            if profile_data.get("follower_count") is not None:
+                page.follower_count = profile_data["follower_count"]
+            if profile_data.get("following_count") is not None:
+                page.following_count = profile_data["following_count"]
+            if profile_data.get("media_count") is not None:
+                page.total_posts = profile_data["media_count"]
+            if profile_data.get("full_name"):
+                page.ig_display_name = profile_data["full_name"]
+            if profile_data.get("profile_pic_url"):
+                page.ig_profile_pic_url = profile_data["profile_pic_url"]
+            await db.commit()
+    except Exception as exc:
+        logger.warning(
+            "In-process profile refresh failed for @%s: %s",
+            page.ig_username, exc,
+        )
+
     return {"status": "queued", "task_id": task_id}
