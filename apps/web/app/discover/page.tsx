@@ -230,7 +230,7 @@ export default function DiscoverPage() {
               <div className="relative aspect-video bg-[#0d1117] overflow-hidden">
                 {/* Thumbnail proxied through our API (fetches from Instagram server-side, no CORS issues) */}
                 <img
-                  src={api.files.getThumbnailUrl(rec.viral_reel_id)}
+                  src={`${api.files.getThumbnailUrl(rec.viral_reel_id)}?v=${Math.floor(Date.now() / 3600000)}`}
                   alt=""
                   className="w-full h-full object-cover"
                   loading="lazy"
