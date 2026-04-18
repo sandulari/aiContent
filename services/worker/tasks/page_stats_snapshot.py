@@ -61,6 +61,10 @@ def _snapshot_one_page(user_page_id: str, ig_username: str) -> dict | None:
     posts = profile.get("media_count") or profile.get("posts_count") if profile else None
     user_pk = profile.get("pk") or profile.get("id") if profile else None
 
+    # Small delay to avoid back-to-back RapidAPI calls triggering rate limits
+    import time
+    time.sleep(2)
+
     # Fetch reels via RapidAPI
     reels_raw = []
     if user_pk:
