@@ -277,22 +277,31 @@ function DateRangePicker({
                   const isInRange = isBetween(day.date, rangeStart, rangeEnd);
                   const isToday = sameDay(day.date, todayDate);
 
+                  // Connected range strip: bg spans full cell width, rounded only on start/end edges
+                  const stripBg = isInRange || isStart || isEnd
+                    ? isStart && isEnd ? "" // single day
+                    : isStart ? "bg-[#d4a843]/10 rounded-l-lg"
+                    : isEnd ? "bg-[#d4a843]/10 rounded-r-lg"
+                    : "bg-[#d4a843]/10"
+                    : "";
+
                   return (
-                    <button
-                      key={i}
-                      onClick={() => handleDayClick(day.date)}
-                      className={[
-                        "w-9 h-9 text-sm rounded-full transition-colors",
-                        !day.inMonth ? "text-[#484f58]" : "",
-                        day.inMonth && !isSelected && !isInRange ? "text-[#e6edf3] hover:bg-[#21262d]" : "",
-                        isStart ? "bg-[#d4a843] text-[#0d1117] font-bold" : "",
-                        isEnd ? "bg-[#d4a843] text-[#0d1117] font-bold" : "",
-                        isInRange && !isStart && !isEnd ? "bg-[#d4a843]/10 text-[#d4a843]" : "",
-                        isToday && !isSelected ? "ring-1 ring-[#484f58]" : "",
-                      ].filter(Boolean).join(" ")}
-                    >
-                      {day.date.getDate()}
-                    </button>
+                    <div key={i} className={`relative flex items-center justify-center ${stripBg} transition-all duration-200`}>
+                      <button
+                        onClick={() => handleDayClick(day.date)}
+                        className={[
+                          "w-9 h-9 text-sm rounded-lg transition-all duration-200 relative z-10",
+                          !day.inMonth ? "text-[#30363d]" : "",
+                          day.inMonth && !isSelected && !isInRange ? "text-[#e6edf3] hover:bg-[#21262d]" : "",
+                          isStart ? "bg-[#d4a843] text-[#0d1117] font-bold shadow-lg shadow-[#d4a843]/25" : "",
+                          isEnd ? "bg-[#d4a843] text-[#0d1117] font-bold shadow-lg shadow-[#d4a843]/25" : "",
+                          isInRange && !isStart && !isEnd ? "text-[#d4a843] font-medium" : "",
+                          isToday && !isSelected ? "bg-[#21262d] text-[#e6edf3] font-medium" : "",
+                        ].filter(Boolean).join(" ")}
+                      >
+                        {day.date.getDate()}
+                      </button>
+                    </div>
                   );
                 })}
               </div>
