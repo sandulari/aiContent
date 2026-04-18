@@ -52,8 +52,8 @@ async def get_profile(username: str) -> dict | None:
         return None
 
 
-async def get_user_reels(user_id: str | int, max_pages: int = 5) -> list[dict]:
-    """Get reels for a user with pagination. Fetches up to max_pages * 12 reels."""
+async def get_user_reels(user_id: str | int, max_pages: int = 10) -> list[dict]:
+    """Get reels for a user with pagination. Fetches up to max_pages * 12 reels (~120)."""
     all_reels = []
     max_id = ""
     try:
