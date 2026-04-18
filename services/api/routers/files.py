@@ -198,7 +198,14 @@ async def proxy_thumbnail(reel_id: UUID, db: AsyncSession = Depends(get_db)):
 
     result = await db.execute(select(ViralReel).where(ViralReel.id == reel_id))
     reel = result.scalar_one_or_none()
-    if not reel or not reel.thumbnail_url:
+    if not reel:
+        return _placeholder_response()
+
+    # Use Instagram's public media endpoint (never expires, no API key needed)
+    # Falls back to stored CDN URL if shortcode extraction fails
+    code = reel.ig_video_id
+    thumb_url = f"https://www.instagram.com/p/{code}/media/?size=m" if code else reel.thumbnail_url
+    if not thumb_url:
         return _placeholder_response()
 
     import httpx
@@ -206,7 +213,7 @@ async def proxy_thumbnail(reel_id: UUID, db: AsyncSession = Depends(get_db)):
     try:
         async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
             resp = await client.get(
-                reel.thumbnail_url,
+                thumb_url,
                 headers={
                     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
                     "Referer": "https://www.instagram.com/",

@@ -228,19 +228,13 @@ export default function DiscoverPage() {
               className="bg-[#161b22] border border-[#21262d] rounded-xl overflow-hidden hover:border-[#30363d] transition-all group"
             >
               <div className="relative aspect-video bg-[#0d1117] overflow-hidden">
-                {/* Thumbnail from Instagram's public media endpoint */}
-                {(() => {
-                  const code = rec.ig_url?.match(/\/reel\/([^/]+)/)?.[1] || rec.ig_url?.match(/\/p\/([^/]+)/)?.[1];
-                  const thumbUrl = code ? `https://www.instagram.com/p/${code}/media/?size=m` : "";
-                  return thumbUrl ? (
-                    <img
-                      src={thumbUrl}
-                      alt=""
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
-                  ) : null;
-                })()}
+                {/* Thumbnail proxied through our API (fetches from Instagram server-side, no CORS issues) */}
+                <img
+                  src={api.files.getThumbnailUrl(rec.viral_reel_id)}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
                 <div className="absolute top-2 left-2 flex gap-1.5">
                   <span className="bg-black/75 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">
                     {formatViews(rec.view_count)} views
