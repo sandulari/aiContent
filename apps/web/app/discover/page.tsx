@@ -227,29 +227,22 @@ export default function DiscoverPage() {
               key={rec.id}
               className="bg-[#161b22] border border-[#21262d] rounded-xl overflow-hidden hover:border-[#30363d] transition-all group"
             >
-              <div className="relative aspect-video bg-[#0d1117] overflow-hidden">
-                <img
-                  src={api.files.getThumbnailUrl(rec.viral_reel_id)}
-                  alt=""
-                  className="w-full h-full object-cover"
-                  loading="lazy"
-                  onError={(e) => {
-                    const target = e.currentTarget;
-                    target.style.display = "none";
-                    target.parentElement!.classList.add("bg-gradient-to-br", "from-[#21262d]", "to-[#161b22]");
-                  }}
-                />
-                <div className="absolute top-2 left-2 flex gap-1.5">
-                  <span className="bg-black/75 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">
-                    {formatViews(rec.view_count)} views
-                  </span>
-                  {rec.duration_seconds && (
-                    <span className="bg-black/75 text-white text-[10px] px-1.5 py-0.5 rounded">
-                      {formatDuration(rec.duration_seconds)}
+              <div className="relative aspect-video bg-gradient-to-br from-[#1c2129] via-[#161b22] to-[#0d1117] overflow-hidden flex flex-col justify-between p-3">
+                {/* Caption preview as thumbnail replacement */}
+                <p className="text-[11px] text-[#8b949e] leading-relaxed line-clamp-4 flex-1">
+                  {rec.caption || "Viral Reel"}
+                </p>
+                <div className="flex items-end justify-between mt-2">
+                  <div className="flex gap-1.5">
+                    <span className="bg-black/50 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">
+                      {formatViews(rec.view_count)} views
                     </span>
-                  )}
-                </div>
-                <div className="absolute top-2 right-2">
+                    {rec.duration_seconds && (
+                      <span className="bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded">
+                        {formatDuration(rec.duration_seconds)}
+                      </span>
+                    )}
+                  </div>
                   <span className="bg-[#0f2e16]/90 text-[#3fb950] text-[10px] font-semibold px-1.5 py-0.5 rounded">
                     {Math.round(rec.match_score * 100)}%
                   </span>
@@ -259,7 +252,7 @@ export default function DiscoverPage() {
                     e.stopPropagation();
                     handleDismiss(rec);
                   }}
-                  className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 bg-black/60 rounded-full p-1 text-white/70 hover:text-white transition-opacity"
+                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 bg-black/60 rounded-full p-1 text-white/70 hover:text-white transition-opacity"
                   title="Dismiss"
                 >
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
