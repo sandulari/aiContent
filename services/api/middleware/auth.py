@@ -14,7 +14,7 @@ if not JWT_SECRET:
     JWT_SECRET = "dev-only-insecure-secret-do-not-use-in-production"
     warnings.warn("JWT_SECRET not set — using insecure development default", stacklevel=1)
 
-ACCESS_TOKEN_MINUTES = 15
+ACCESS_TOKEN_MINUTES = int(os.getenv("ACCESS_TOKEN_MINUTES", "60"))
 REFRESH_TOKEN_DAYS = 7
 COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # None = current domain
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() == "true"

@@ -156,18 +156,9 @@ export class ApiError extends Error {
   }
 }
 
-async function req<T>(endpoint: string, opts: FetchOpts = {}): Promise<T> {
-  const { params, ...init } = opts;
-  let url = `${API_BASE}${endpoint}`;
-  if (params) {
-    const sp = new URLSearchParams();
-    for (const [k, v] of Object.entries(params)) { if (v !== undefined && v !== null) sp.append(k, String(v)); }
-    const qs = sp.toString();
-    if (qs) url += `?${qs}`;
-  }
-  const headers: Record<string, string> = { "Content-Type": "application/json", ...(init.headers as Record<string, string>) };
-  // No Authorization header — httpOnly cookies are sent automatically
-  if (init.body instanceof FormData) delete headers["Content-Type"];
+let _refreshing: Promise<void> | null = null;
+
+async function _doFetch<T>(url: string, init: RequestInit, headers: Record<string, string>): Promise<T> {
   const res = await fetch(url, { ...init, headers, credentials: "include" });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -178,6 +169,39 @@ async function req<T>(endpoint: string, opts: FetchOpts = {}): Promise<T> {
   }
   if (res.status === 204) return undefined as T;
   return res.json();
+}
+
+async function req<T>(endpoint: string, opts: FetchOpts = {}): Promise<T> {
+  const { params, ...init } = opts;
+  let url = `${API_BASE}${endpoint}`;
+  if (params) {
+    const sp = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) { if (v !== undefined && v !== null) sp.append(k, String(v)); }
+    const qs = sp.toString();
+    if (qs) url += `?${qs}`;
+  }
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...(init.headers as Record<string, string>) };
+  if (init.body instanceof FormData) delete headers["Content-Type"];
+
+  try {
+    return await _doFetch<T>(url, init, headers);
+  } catch (e) {
+    // On 401, try refreshing the token once and retry
+    if (e instanceof ApiError && e.status === 401 && !endpoint.includes("/auth/")) {
+      if (!_refreshing) {
+        _refreshing = fetch(`${API_BASE}/api/auth/refresh`, { method: "POST", credentials: "include" })
+          .then((r) => { if (!r.ok) throw new Error("refresh failed"); })
+          .finally(() => { _refreshing = null; });
+      }
+      try {
+        await _refreshing;
+        return await _doFetch<T>(url, init, headers);
+      } catch {
+        throw e; // refresh failed — throw original 401
+      }
+    }
+    throw e;
+  }
 }
 
 // ── API Client ───────────────────────────────────────────────────────────
