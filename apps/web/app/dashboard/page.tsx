@@ -382,6 +382,92 @@ function StatCard({
   );
 }
 
+// ── ReelsTable (sortable) ───────────────────────────────────────────────
+
+type ReelSortKey = "date" | "views" | "likes" | "comments";
+
+function ReelsTable({ reels }: { reels: NonNullable<DashboardData["reels"]> }) {
+  const [sortBy, setSortBy] = useState<ReelSortKey>("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  function toggleSort(key: ReelSortKey) {
+    if (sortBy === key) {
+      setSortDir(sortDir === "desc" ? "asc" : "desc");
+    } else {
+      setSortBy(key);
+      setSortDir("desc");
+    }
+  }
+
+  const sorted = [...reels].sort((a, b) => {
+    let diff = 0;
+    switch (sortBy) {
+      case "date":
+        diff = (new Date(a.posted_at || 0).getTime()) - (new Date(b.posted_at || 0).getTime());
+        break;
+      case "views":
+        diff = a.view_count - b.view_count;
+        break;
+      case "likes":
+        diff = a.like_count - b.like_count;
+        break;
+      case "comments":
+        diff = a.comment_count - b.comment_count;
+        break;
+    }
+    return sortDir === "desc" ? -diff : diff;
+  });
+
+  const SortIcon = ({ active, dir }: { active: boolean; dir: "asc" | "desc" }) => (
+    <svg className={`w-3 h-3 inline-block ml-0.5 ${active ? "text-[#58a6ff]" : "text-[#30363d]"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d={active && dir === "asc" ? "M5 15l7-7 7 7" : "M19 9l-7 7-7-7"} />
+    </svg>
+  );
+
+  const ColHeader = ({ label, sortKey }: { label: string; sortKey: ReelSortKey }) => (
+    <button
+      onClick={() => toggleSort(sortKey)}
+      className={`text-right flex items-center justify-end gap-0.5 hover:text-[#e6edf3] transition-colors ${sortBy === sortKey ? "text-[#58a6ff]" : ""}`}
+    >
+      {label}
+      <SortIcon active={sortBy === sortKey} dir={sortDir} />
+    </button>
+  );
+
+  return (
+    <div className="mb-8">
+      <h2 className="text-sm font-medium text-[#e6edf3] mb-3">
+        Reels in This Period
+        <span className="ml-2 text-[#484f58] font-normal">({reels.length})</span>
+      </h2>
+      <div className="bg-[#161b22] border border-[#21262d] rounded-xl overflow-hidden">
+        <div className="grid grid-cols-[1fr_80px_80px_80px_100px] gap-2 px-4 py-2.5 border-b border-[#21262d] text-[10px] text-[#484f58] uppercase tracking-wider font-medium">
+          <span>Caption</span>
+          <ColHeader label="Views" sortKey="views" />
+          <ColHeader label="Likes" sortKey="likes" />
+          <ColHeader label="Comments" sortKey="comments" />
+          <ColHeader label="Posted" sortKey="date" />
+        </div>
+        {sorted.map((reel, i) => (
+          <a
+            key={reel.ig_code}
+            href={reel.ig_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`grid grid-cols-[1fr_80px_80px_80px_100px] gap-2 px-4 py-3 items-center hover:bg-[#1c2129] transition-colors ${i !== sorted.length - 1 ? "border-b border-[#21262d]/50" : ""}`}
+          >
+            <span className="text-xs text-[#e6edf3] truncate">{reel.caption || "Untitled"}</span>
+            <span className="text-xs text-[#e6edf3] text-right font-medium tabular-nums">{formatNumber(reel.view_count)}</span>
+            <span className="text-xs text-[#e6edf3] text-right tabular-nums">{formatNumber(reel.like_count)}</span>
+            <span className="text-xs text-[#7d8590] text-right tabular-nums">{formatNumber(reel.comment_count)}</span>
+            <span className="text-[10px] text-[#484f58] text-right">{reel.posted_at ? formatDate(reel.posted_at) : "—"}</span>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Dashboard ───────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -734,38 +820,9 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* All reels in period */}
+            {/* All reels in period — sortable */}
             {d?.reels && d.reels.length > 0 && (
-              <div className="mb-8">
-                <h2 className="text-sm font-medium text-[#e6edf3] mb-3">
-                  Reels in This Period
-                  <span className="ml-2 text-[#484f58] font-normal">({d.reels.length})</span>
-                </h2>
-                <div className="bg-[#161b22] border border-[#21262d] rounded-xl overflow-hidden">
-                  <div className="grid grid-cols-[1fr_80px_80px_80px_100px] gap-2 px-4 py-2.5 border-b border-[#21262d] text-[10px] text-[#484f58] uppercase tracking-wider font-medium">
-                    <span>Caption</span>
-                    <span className="text-right">Views</span>
-                    <span className="text-right">Likes</span>
-                    <span className="text-right">Comments</span>
-                    <span className="text-right">Posted</span>
-                  </div>
-                  {d.reels.map((reel, i) => (
-                    <a
-                      key={reel.ig_code}
-                      href={reel.ig_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`grid grid-cols-[1fr_80px_80px_80px_100px] gap-2 px-4 py-3 items-center hover:bg-[#1c2129] transition-colors ${i !== d.reels!.length - 1 ? "border-b border-[#21262d]/50" : ""}`}
-                    >
-                      <span className="text-xs text-[#e6edf3] truncate">{reel.caption || "Untitled"}</span>
-                      <span className="text-xs text-[#e6edf3] text-right font-medium tabular-nums">{formatNumber(reel.view_count)}</span>
-                      <span className="text-xs text-[#e6edf3] text-right tabular-nums">{formatNumber(reel.like_count)}</span>
-                      <span className="text-xs text-[#7d8590] text-right tabular-nums">{formatNumber(reel.comment_count)}</span>
-                      <span className="text-[10px] text-[#484f58] text-right">{reel.posted_at ? formatDate(reel.posted_at) : "—"}</span>
-                    </a>
-                  ))}
-                </div>
-              </div>
+              <ReelsTable reels={d.reels} />
             )}
 
             {/* Recent exports */}
