@@ -147,7 +147,7 @@ def _snapshot_one_page(user_page_id: str, ig_username: str) -> dict | None:
                 "top_views": top_reel["view_count"] if top_reel else None,
                 "top_likes": top_reel["like_count"] if top_reel else None,
                 "top_caption": top_reel["caption"] if top_reel else None,
-                "raw": json.dumps({"week_reels": len(week_reels), "total_reels": len(reels)}),
+                "raw": json.dumps({"week_reels": len(week_reels), "total_reels": len(reels_raw)}),
             },
         )
 
