@@ -291,6 +291,9 @@ export const api = {
     download(id: string, sourceId: string) {
       return req<{ job_id: string }>(`/api/reels/${id}/download`, { method: "POST", body: JSON.stringify({ source_id: sourceId }) });
     },
+    downloadDirect(id: string) {
+      return req<{ job_id?: string; status: string }>(`/api/reels/${id}/download-direct`, { method: "POST" });
+    },
   },
 
   templates: {

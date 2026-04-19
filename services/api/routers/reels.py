@@ -116,3 +116,53 @@ async def download_reel(
     await db.flush()
     await db.refresh(job)
     return {"job_id": str(job.id), "status": "downloading"}
+
+
+@router.post("/{reel_id}/download-direct", status_code=status.HTTP_202_ACCEPTED)
+async def download_reel_direct(
+    reel_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download directly from Instagram — no source search needed.
+
+    Creates an auto-source from the IG URL and triggers the download
+    immediately. The student gets the video every time, guaranteed.
+    """
+    reel = await db.get(ViralReel, reel_id)
+    if not reel:
+        raise HTTPException(status_code=404, detail="Reel not found")
+
+    # Check if already downloaded
+    from sqlalchemy import select as sa_select
+    existing_file = await db.execute(
+        sa_select(VideoFile).where(VideoFile.viral_reel_id == reel_id).limit(1)
+    )
+    if existing_file.scalar_one_or_none():
+        reel.status = "downloaded"
+        return {"status": "already_downloaded", "reel_id": str(reel_id)}
+
+    # Create an Instagram source automatically
+    ig_url = reel.ig_url or f"https://www.instagram.com/reel/{reel.ig_video_id}/"
+    source = VideoSource(
+        viral_reel_id=reel_id,
+        source_type="instagram",
+        source_url=ig_url,
+        source_title=f"Instagram Reel @{reel.ig_video_id}",
+        match_confidence=1.0,
+        is_selected=True,
+    )
+    db.add(source)
+    await db.flush()
+    await db.refresh(source)
+
+    reel.status = "downloading"
+    task_id = trigger_download(reel_id, source.id)
+    job = Job(
+        celery_task_id=task_id, job_type="download", status="pending",
+        reference_id=reel_id, reference_type="viral_reel",
+    )
+    db.add(job)
+    await db.flush()
+    await db.refresh(job)
+    return {"job_id": str(job.id), "status": "downloading"}

@@ -107,6 +107,25 @@ export default function ReelDetailPage() {
     }
   };
 
+  const handleDownloadDirect = async () => {
+    setDownloadingId("direct");
+    try {
+      const res = await api.reels.downloadDirect(reelId);
+      if (res.status === "already_downloaded") {
+        // Already downloaded — go straight to editor
+        handleOpenEditor();
+        return;
+      }
+      // Polling will pick up the status change
+      const d = await api.reels.get(reelId);
+      setReel(d);
+    } catch (e: any) {
+      console.error("Failed to download:", e?.message || "unknown error");
+      setError(e?.message || "Download failed. Please try again.");
+      setDownloadingId(null);
+    }
+  };
+
   const handleOpenEditor = async () => {
     if (!reel) return;
     setOpeningEditor(true);
@@ -227,15 +246,26 @@ export default function ReelDetailPage() {
         </Card>
       )}
 
-      {/* Find Sources (initial state) */}
-      {!hasSources && !isSearching && !canEdit && !isDownloading && !searchFailed && (
+      {/* Download directly from Instagram */}
+      {!canEdit && !isDownloading && (
         <Card>
-          <div className="flex flex-col items-center py-8 gap-3">
-            <p className="text-sm text-[#e6edf3] font-medium">Find this video on other platforms</p>
-            <p className="text-xs text-[#484f58] max-w-md text-center">We'll search YouTube, TikTok, and other platforms for the same video without Instagram's fingerprint.</p>
-            <Button onClick={handleFindSources} loading={findingSource} className="mt-2">Find Alternative Sources</Button>
+          <div className="flex flex-col items-center py-6 gap-3">
+            <p className="text-sm text-[#e6edf3] font-medium">Ready to use this reel?</p>
+            <p className="text-xs text-[#484f58] max-w-md text-center">Download the video and open it in the editor with your template. Edit, customize, and export.</p>
+            <Button onClick={handleDownloadDirect} loading={downloadingId === "direct"} className="mt-2 px-8" size="lg">
+              Download & Edit This Reel
+            </Button>
           </div>
         </Card>
+      )}
+
+      {/* Alternative sources (optional — search YouTube/TikTok for a cleaner copy) */}
+      {!canEdit && !isDownloading && !hasSources && !isSearching && !searchFailed && (
+        <div className="text-center">
+          <button onClick={handleFindSources} className="text-xs text-[#484f58] hover:text-[#7d8590] transition-colors">
+            Or search for alternative sources on YouTube/TikTok →
+          </button>
+        </div>
       )}
 
       {/* Searching (in progress) */}
