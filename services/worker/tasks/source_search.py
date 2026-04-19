@@ -234,33 +234,43 @@ def _search_youtube_via_http(query: str, max_results: int = 8) -> list[dict]:
             logger.warning("YouTube HTTP search failed: %d", resp.status_code)
             return []
 
-        # Extract video IDs and titles from the page
+        # Extract video IDs from the page
         video_ids = list(dict.fromkeys(re.findall(r'watch\?v=([a-zA-Z0-9_-]{11})', resp.text)))[:max_results]
 
-        # Extract titles — they appear in the JSON data embedded in the page
+        # Extract titles from the JSON data embedded in the page
         titles = {}
-        for match in re.finditer(r'"videoId":"([^"]+)".*?"text":"([^"]{5,100})"', resp.text):
+        for match in re.finditer(r'"videoId":"([^"]+)".*?"title":\{"runs":\[\{"text":"([^"]+)"\}', resp.text):
             vid_id, title = match.group(1), match.group(2)
             if vid_id not in titles:
                 titles[vid_id] = title
 
-        # Get duration for each video using yt-dlp (just metadata, no download)
+        # Extract durations from the search results page HTML
+        # YouTube embeds lengthText with accessibility labels like "2 minutes, 30 seconds"
+        durations = {}
+        for match in re.finditer(
+            r'"videoId":"([^"]+)".*?"lengthText":\{"accessibility":\{"accessibilityData":\{"label":"([^"]+)"\}\}',
+            resp.text,
+        ):
+            vid_id = match.group(1)
+            dur_text = match.group(2)
+            total = 0
+            hours = re.search(r'(\d+)\s*hour', dur_text)
+            mins = re.search(r'(\d+)\s*minute', dur_text)
+            secs = re.search(r'(\d+)\s*second', dur_text)
+            if hours:
+                total += int(hours.group(1)) * 3600
+            if mins:
+                total += int(mins.group(1)) * 60
+            if secs:
+                total += int(secs.group(1))
+            if total > 0:
+                durations[vid_id] = total
+
+        # Build results from extracted page data (no per-video yt-dlp calls)
         for vid_id in video_ids:
             url = f"https://www.youtube.com/watch?v={vid_id}"
             title = titles.get(vid_id, "")
-            duration = 0
-
-            # Try to get duration via yt-dlp metadata
-            try:
-                cmd = ["yt-dlp", "--dump-json", "--no-download", "--socket-timeout", "10", url]
-                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                if proc.returncode == 0 and proc.stdout.strip():
-                    info = json.loads(proc.stdout.strip().split("\n")[0])
-                    duration = info.get("duration") or 0
-                    if not title:
-                        title = info.get("title", "")
-            except Exception:
-                pass
+            duration = durations.get(vid_id, 0)
 
             results.append({
                 "source_type": "youtube",
@@ -339,6 +349,118 @@ def _search_youtube_via_ytdlp(query: str, max_results: int = 8) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# TikTok search via yt-dlp
+# ---------------------------------------------------------------------------
+
+
+def _search_tiktok_via_ytdlp(query: str, max_results: int = 5) -> list[dict]:
+    """Search TikTok using yt-dlp's ttsearch (TikTok blocks server-side HTTP)."""
+    results = []
+    try:
+        cmd = [
+            "yt-dlp",
+            f"ttsearch{max_results}:{query}",
+            "--dump-json",
+            "--no-download",
+            "--socket-timeout", "15",
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+        if proc.returncode != 0:
+            logger.warning("TikTok yt-dlp search failed: %s", proc.stderr[:200] if proc.stderr else "")
+            return []
+        for line in proc.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            try:
+                info = json.loads(line)
+                results.append({
+                    "source_type": "tiktok",
+                    "source_url": info.get("webpage_url", ""),
+                    "source_title": info.get("title", ""),
+                    "source_thumbnail_url": info.get("thumbnail", ""),
+                    "resolution": None,
+                    "fps": None,
+                    "duration": info.get("duration") or 0,
+                })
+            except json.JSONDecodeError:
+                continue
+    except subprocess.TimeoutExpired:
+        logger.warning("TikTok search timed out for query '%s'", query)
+    except Exception as e:
+        logger.warning("TikTok search error: %s", e)
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Google Video search via HTTP
+# ---------------------------------------------------------------------------
+
+
+def _search_google_video(query: str, max_results: int = 8) -> list[dict]:
+    """Search Google Videos via HTTP scraping. Finds videos across all platforms."""
+    import urllib.parse
+    import httpx
+
+    results = []
+    try:
+        encoded = urllib.parse.quote_plus(query)
+        resp = httpx.get(
+            f"https://www.google.com/search?q={encoded}&tbm=vid",
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+            },
+            timeout=15,
+            follow_redirects=True,
+        )
+        if resp.status_code != 200:
+            logger.warning("Google Video search failed: %d", resp.status_code)
+            return []
+
+        # Extract video URLs from Google results
+        urls = re.findall(
+            r'href="/url\?q=(https?://(?:www\.)?(?:youtube\.com/watch|youtu\.be|tiktok\.com|vimeo\.com|dailymotion\.com)[^&"]+)',
+            resp.text,
+        )
+        urls += re.findall(
+            r'(https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)[a-zA-Z0-9_-]+)',
+            resp.text,
+        )
+
+        # Dedupe
+        seen = set()
+        for url in urls[:max_results]:
+            url = urllib.parse.unquote(url).split("&")[0]
+            if url in seen:
+                continue
+            seen.add(url)
+
+            source_type = "youtube"
+            if "tiktok.com" in url:
+                source_type = "tiktok"
+            elif "vimeo.com" in url:
+                source_type = "vimeo"
+            elif "dailymotion.com" in url:
+                source_type = "dailymotion"
+
+            results.append({
+                "source_type": source_type,
+                "source_url": url,
+                "source_title": "",
+                "source_thumbnail_url": None,
+                "resolution": None,
+                "fps": None,
+                "duration": 0,
+            })
+    except Exception as e:
+        logger.warning("Google Video search error: %s", e)
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Celery task
 # ---------------------------------------------------------------------------
 
@@ -403,7 +525,18 @@ def search_source(self, reel_id: str):
 
         for query in query_candidates:
             queries_tried += 1
-            results = _search_youtube_via_ytdlp(query, max_results=8)
+
+            # --- YouTube search ---
+            yt_results = _search_youtube_via_ytdlp(query, max_results=8)
+
+            # --- TikTok search ---
+            tt_results = _search_tiktok_via_ytdlp(query, max_results=3)
+
+            # --- Google Video search (catches YT, TikTok, Vimeo, Dailymotion) ---
+            gv_results = _search_google_video(query, max_results=5)
+
+            # Combine all platform results for this query
+            results = yt_results + tt_results + gv_results
 
             if not results:
                 logger.info("  query '%s' returned 0 results — next", query)
@@ -427,8 +560,9 @@ def search_source(self, reel_id: str):
                     batch_best_confidence = confidence
 
             logger.info(
-                "  query '%s' → %d new results, best confidence=%.2f",
-                query, len(results), batch_best_confidence,
+                "  query '%s' → %d new results (yt=%d tt=%d gv=%d), best confidence=%.2f",
+                query, len(results), len(yt_results), len(tt_results),
+                len(gv_results), batch_best_confidence,
             )
 
             # Early stop: we found a very high-confidence match
@@ -488,7 +622,7 @@ def search_source(self, reel_id: str):
 
             # Update reel status
             new_status = "source_found" if stored_count > 0 else "failed"
-            error_msg = None if stored_count > 0 else "No alternative sources found on YouTube"
+            error_msg = None if stored_count > 0 else "No alternative sources found on YouTube/TikTok/Google"
 
             session.execute(text("""
                 UPDATE viral_reels SET status = :status, error_message = :err WHERE id = :vid
