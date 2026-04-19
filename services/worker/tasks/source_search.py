@@ -216,11 +216,74 @@ def _calculate_match_confidence(
 # ---------------------------------------------------------------------------
 
 
+def _search_youtube_via_http(query: str, max_results: int = 8) -> list[dict]:
+    """Search YouTube via HTTP scraping — works even when yt-dlp is bot-blocked."""
+    import urllib.parse
+    import httpx
+
+    results: list[dict] = []
+    try:
+        encoded = urllib.parse.quote_plus(query)
+        resp = httpx.get(
+            f"https://www.youtube.com/results?search_query={encoded}",
+            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
+            timeout=15,
+            follow_redirects=True,
+        )
+        if resp.status_code != 200:
+            logger.warning("YouTube HTTP search failed: %d", resp.status_code)
+            return []
+
+        # Extract video IDs and titles from the page
+        video_ids = list(dict.fromkeys(re.findall(r'watch\?v=([a-zA-Z0-9_-]{11})', resp.text)))[:max_results]
+
+        # Extract titles — they appear in the JSON data embedded in the page
+        titles = {}
+        for match in re.finditer(r'"videoId":"([^"]+)".*?"text":"([^"]{5,100})"', resp.text):
+            vid_id, title = match.group(1), match.group(2)
+            if vid_id not in titles:
+                titles[vid_id] = title
+
+        # Get duration for each video using yt-dlp (just metadata, no download)
+        for vid_id in video_ids:
+            url = f"https://www.youtube.com/watch?v={vid_id}"
+            title = titles.get(vid_id, "")
+            duration = 0
+
+            # Try to get duration via yt-dlp metadata
+            try:
+                cmd = ["yt-dlp", "--dump-json", "--no-download", "--socket-timeout", "10", url]
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if proc.returncode == 0 and proc.stdout.strip():
+                    info = json.loads(proc.stdout.strip().split("\n")[0])
+                    duration = info.get("duration") or 0
+                    if not title:
+                        title = info.get("title", "")
+            except Exception:
+                pass
+
+            results.append({
+                "source_type": "youtube",
+                "source_url": url,
+                "source_title": title,
+                "source_thumbnail_url": f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg",
+                "resolution": None,
+                "fps": None,
+                "duration": duration,
+            })
+
+    except Exception as e:
+        logger.error("YouTube HTTP search error: %s", e)
+
+    return results
+
+
 def _search_youtube_via_ytdlp(query: str, max_results: int = 8) -> list[dict]:
     """Search YouTube using yt-dlp's built-in search.
 
     Uses --dump-json WITHOUT --flat-playlist so we get full metadata
     including accurate duration for each result.
+    Falls back to HTTP scraping if yt-dlp is bot-blocked.
     """
     results: list[dict] = []
     try:
@@ -235,8 +298,8 @@ def _search_youtube_via_ytdlp(query: str, max_results: int = 8) -> list[dict]:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
 
         if proc.returncode != 0:
-            logger.warning("yt-dlp YouTube search failed for query '%s': %s", query, proc.stderr[:300])
-            return []
+            logger.warning("yt-dlp YouTube search blocked, falling back to HTTP: %s", proc.stderr[:200])
+            return _search_youtube_via_http(query, max_results)
 
         for line in proc.stdout.strip().split("\n"):
             if not line.strip():
