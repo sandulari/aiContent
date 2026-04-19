@@ -1,6 +1,9 @@
 """
-Source search task: find the same or similar video on YouTube/other platforms.
-Uses yt-dlp's built-in search (no API keys required) as the primary method.
+Source search task: find the EXACT same video on YouTube/TikTok.
+
+Instagram reels are often reposted from YouTube/TikTok. We find the original
+by searching with multiple query strategies and scoring candidates by
+duration match (strongest signal) + text similarity.
 """
 
 import json
@@ -19,15 +22,21 @@ logger = logging.getLogger(__name__)
 
 TMP_DIR = os.getenv("HARVESTER_TMP_DIR", "/tmp/harvester")
 
+# ---------------------------------------------------------------------------
+# Noise / stop-word sets
+# ---------------------------------------------------------------------------
 
-# Hashtags and words that are pure noise — they steer the YouTube search
-# away from the actual content. "9gag" matches the wrong account, "fyp"
-# is generic spam, etc.
 _NOISE_TOKENS = {
     "9gag", "fyp", "foryou", "foryoupage", "viral", "viralvideo",
     "reels", "reel", "instagram", "ig", "explore", "trending",
     "follow", "like", "share", "comment", "subscribe",
-    "tiktok", "instareels", "instagood",
+    "tiktok", "instareels", "instagood", "explorepage", "repost",
+    "motivationquotes", "motivational", "viralreels", "dailymotivation",
+    "inspirationalquotes", "fyppage", "fypp", "viralpost", "instadaily",
+    "instavideo", "reelsinstagram", "reelsvideo", "trendingreels",
+    "explorepage", "likeforlikes", "followforfollowback", "likes",
+    "followme", "followback", "likesforlike", "commentbelow",
+    "doubleclick", "tagafriend", "sharethis", "savepost",
 }
 
 _STOPWORDS = {
@@ -38,87 +47,88 @@ _STOPWORDS = {
     "my", "your", "his", "her", "their", "our", "me", "him", "us", "them",
     "do", "does", "did", "have", "has", "had", "will", "would", "can",
     "could", "should", "shall", "may", "might", "just", "via", "amp",
+    "not", "no", "yes", "all", "any", "some", "every", "each", "more",
+    "most", "other", "about", "into", "over", "after", "before", "when",
+    "where", "how", "what", "who", "which", "why", "because", "also",
+    "very", "much", "many", "such", "only", "even", "still", "already",
+    "here", "there", "now", "get", "got", "make", "made", "take", "took",
+    "come", "came", "going", "goes", "know", "knew", "think", "thought",
+    "want", "need", "look", "see", "saw", "way", "well", "back",
+    "never", "always", "really", "right", "one", "two", "new", "old",
+    "first", "last", "long", "great", "little", "own", "good", "big",
+    "high", "small", "large", "next", "early", "young", "same", "able",
+    "best", "must", "let", "keep", "too", "don", "doesn", "didn",
+    "won", "isn", "aren", "wasn", "weren", "hasn", "haven", "hadn",
+    "couldn", "wouldn", "shouldn", "ain",
 }
 
+# Confidence threshold — stop searching once we find a candidate this good
+_HIGH_CONFIDENCE_THRESHOLD = 0.80
 
-def _extract_keywords(caption: str, page_username: str = "") -> list[str]:
-    """Return a *prioritised* list of search query candidates.
+# ---------------------------------------------------------------------------
+# Query building
+# ---------------------------------------------------------------------------
 
-    The renderer used to use a single mangled query string, which broke on
-    captions like "drill drop and roll 🐱 @baaaaauri - #calico #9gag #straycat"
-    (gets searched literally → 0 YouTube hits). The new flow tries several
-    strategies in order until one returns results:
 
-      1. Best content words + best hashtag (e.g. "calico straycat")
-      2. Top hashtags joined (e.g. "calico straycat")
-      3. Page username + a content noun
-      4. Page username alone
-      5. Cleaned full caption (last-ditch)
+def _build_search_queries(caption: str, duration: float, page_username: str) -> list[str]:
+    """Build multiple search queries from most specific to least.
+
+    Returns up to ~6 distinct queries ordered by expected precision.
     """
     queries: list[str] = []
 
     if not caption:
-        if page_username:
-            queries.append(page_username)
-        queries.append("viral video")
-        return queries
+        return [page_username] if page_username else []
 
-    # Pull hashtags and @mentions out so we can use them separately.
-    hashtags = [
-        h.lower()
-        for h in re.findall(r"#(\w+)", caption)
-        if h.lower() not in _NOISE_TOKENS
-    ]
-    mentions = [m.lower() for m in re.findall(r"@(\w+)", caption)]
+    # Clean caption: strip hashtags, mentions, emojis, special chars
+    clean = re.sub(r"#\w+", "", caption)
+    clean = re.sub(r"@\w+", "", clean)
+    clean = re.sub(r"[^\w\s'\".,!?-]", "", clean)  # Remove emojis / specials
+    clean = re.sub(r"\s+", " ", clean).strip()
 
-    # Strip emojis, punctuation, mentions, and hashtags from the body text.
-    body = re.sub(r"#\w+", " ", caption)
-    body = re.sub(r"@\w+", " ", body)
-    body = re.sub(r"[^\w\s'-]", " ", body)
-    body = re.sub(r"\s+", " ", body).strip()
+    # Split into sentences
+    sentences = re.split(r"[.!?\n]+", clean)
+    sentences = [s.strip() for s in sentences if len(s.strip()) > 15]
 
-    # Score body words: keep short content nouns, drop stopwords + noise.
-    words = []
-    for w in body.split():
-        wl = w.lower().strip("'-")
-        if not wl or len(wl) < 3:
-            continue
-        if wl in _STOPWORDS or wl in _NOISE_TOKENS:
-            continue
-        if wl.isdigit():
-            continue
-        words.append(wl)
+    # Strategy 1: Most unique/longest sentence as exact-phrase search.
+    # Exact phrases are the single best way to find a specific video.
+    if sentences:
+        best = max(sentences, key=len)
+        if len(best) > 20:
+            queries.append(f'"{best[:80]}"')
 
-    top_words = words[:6]
-    top_tags = hashtags[:3]
+    # Strategy 2: First meaningful sentence (unquoted, broader match)
+    if sentences:
+        first = sentences[0][:60]
+        queries.append(first)
 
-    # Strategy 1: combine the best 1-2 hashtags with the best body words.
-    if top_tags and top_words:
-        q1 = " ".join(top_tags[:2] + top_words[:3])
-        queries.append(q1)
+    # Strategy 3: Named entities + first sentence fragment.
+    # Capitalized multi-word tokens are likely person/brand names.
+    names = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b", caption)
+    names = [n for n in names if len(n) > 3 and n.lower() not in _STOPWORDS]
+    if names and sentences:
+        queries.append(f"{names[0]} {sentences[0][:40]}")
 
-    # Strategy 2: just the meaningful hashtags, joined.
-    if top_tags:
-        queries.append(" ".join(top_tags))
+    # Build a shared pool of distinctive content words
+    words: list[str] = []
+    for w in clean.split():
+        wl = w.lower().strip(".,!?'\"")
+        if len(wl) > 4 and wl not in _STOPWORDS and wl not in _NOISE_TOKENS:
+            words.append(wl)
 
-    # Strategy 3: page username + a couple of content words.
-    if page_username and top_words:
-        queries.append(f"{page_username} {' '.join(top_words[:2])}")
+    # Strategy 4: Top distinctive nouns
+    if words:
+        queries.append(" ".join(words[:6]))
 
-    # Strategy 4: just the body words (no tags).
-    if top_words:
-        queries.append(" ".join(top_words[:4]))
+    # Strategy 5: Short version for YouTube Shorts
+    if words:
+        queries.append(f"{' '.join(words[:4])} #shorts")
 
-    # Strategy 5: page username alone (last resort).
-    if page_username:
-        queries.append(page_username)
+    # Strategy 6: Page username + key words (the IG poster may be the uploader)
+    if page_username and words:
+        queries.append(f"{page_username} {' '.join(words[:3])}")
 
-    # Strategy 6: cleaned-up full caption, capped.
-    cleaned_full = (body or caption)[:80].rsplit(" ", 1)[0] if body else caption[:80]
-    if cleaned_full and cleaned_full not in queries:
-        queries.append(cleaned_full)
-
-    # Dedupe while preserving order, drop empties.
+    # Dedupe while preserving order
     seen: set[str] = set()
     final: list[str] = []
     for q in queries:
@@ -127,26 +137,105 @@ def _extract_keywords(caption: str, page_username: str = "") -> list[str]:
             seen.add(q)
             final.append(q)
 
-    return final or ["viral video"]
+    return final or ([page_username] if page_username else [])
 
 
-def _search_youtube_via_ytdlp(query: str, max_results: int = 5) -> list[dict]:
-    """Search YouTube using yt-dlp's built-in search. No API key needed."""
-    results = []
+# ---------------------------------------------------------------------------
+# Scoring helpers
+# ---------------------------------------------------------------------------
+
+
+def _duration_match_score(ig_duration: float, yt_duration: float) -> float:
+    """Score 0-1 based on how close the durations are.
+
+    Duration is the strongest signal we have: if two videos are within
+    +/-2 seconds they are almost certainly the same content.
+    """
+    if not ig_duration or not yt_duration:
+        return 0.3  # Unknown — neutral bias
+
+    diff = abs(ig_duration - yt_duration)
+    if diff <= 2:
+        return 1.0   # Almost certainly the same video
+    elif diff <= 5:
+        return 0.8   # Very likely
+    elif diff <= 10:
+        return 0.5   # Possible (slightly different cut)
+    elif diff <= 30:
+        return 0.2   # Unlikely but worth checking
+    else:
+        return 0.0   # Different video
+
+
+def _text_similarity(text1: str, text2: str) -> float:
+    """Word-overlap ratio between two texts.
+
+    Uses set intersection over the smaller set so that a short YouTube title
+    matching several words of a long Instagram caption still scores high.
+    """
+    if not text1 or not text2:
+        return 0.0
+
+    def _meaningful_words(t: str) -> set[str]:
+        return {
+            w.lower()
+            for w in re.findall(r"\w+", t)
+            if len(w) > 3 and w.lower() not in _STOPWORDS and w.lower() not in _NOISE_TOKENS
+        }
+
+    words1 = _meaningful_words(text1)
+    words2 = _meaningful_words(text2)
+    if not words1 or not words2:
+        return 0.0
+
+    overlap = len(words1 & words2)
+    return overlap / min(len(words1), len(words2))
+
+
+def _calculate_match_confidence(
+    ig_caption: str,
+    ig_duration: float,
+    yt_title: str,
+    yt_duration: float,
+) -> float:
+    """Combined confidence that the YouTube result is the same video.
+
+    Weights: duration 60%, text 40%.
+    Duration is the killer signal — two videos with the exact same length
+    from a keyword search are almost certainly the same content.
+    """
+    duration_score = _duration_match_score(ig_duration, yt_duration)
+    text_score = _text_similarity(ig_caption, yt_title)
+
+    confidence = duration_score * 0.6 + text_score * 0.4
+    return round(confidence, 2)
+
+
+# ---------------------------------------------------------------------------
+# yt-dlp search
+# ---------------------------------------------------------------------------
+
+
+def _search_youtube_via_ytdlp(query: str, max_results: int = 8) -> list[dict]:
+    """Search YouTube using yt-dlp's built-in search.
+
+    Uses --dump-json WITHOUT --flat-playlist so we get full metadata
+    including accurate duration for each result.
+    """
+    results: list[dict] = []
     try:
         cmd = [
             "yt-dlp",
             f"ytsearch{max_results}:{query}",
             "--dump-json",
             "--no-download",
-            "--flat-playlist",
             "--socket-timeout", "15",
         ]
 
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
 
         if proc.returncode != 0:
-            logger.warning("yt-dlp YouTube search failed: %s", proc.stderr[:200])
+            logger.warning("yt-dlp YouTube search failed for query '%s': %s", query, proc.stderr[:300])
             return []
 
         for line in proc.stdout.strip().split("\n"):
@@ -157,7 +246,11 @@ def _search_youtube_via_ytdlp(query: str, max_results: int = 5) -> list[dict]:
                 vid_id = info.get("id", "")
                 title = info.get("title", "")
                 duration = info.get("duration") or 0
-                url = info.get("url") or info.get("webpage_url") or f"https://www.youtube.com/watch?v={vid_id}"
+                url = (
+                    info.get("webpage_url")
+                    or info.get("url")
+                    or f"https://www.youtube.com/watch?v={vid_id}"
+                )
 
                 if not vid_id:
                     continue
@@ -167,62 +260,39 @@ def _search_youtube_via_ytdlp(query: str, max_results: int = 5) -> list[dict]:
                     "source_url": url,
                     "source_title": title,
                     "source_thumbnail_url": info.get("thumbnail"),
-                    "resolution": None,
-                    "fps": None,
+                    "resolution": info.get("resolution"),
+                    "fps": info.get("fps"),
                     "duration": duration,
                 })
             except json.JSONDecodeError:
                 continue
 
     except subprocess.TimeoutExpired:
-        logger.warning("yt-dlp YouTube search timed out")
+        logger.warning("yt-dlp YouTube search timed out for query '%s'", query)
     except Exception as e:
-        logger.error("yt-dlp YouTube search error: %s", e)
+        logger.error("yt-dlp YouTube search error for query '%s': %s", query, e)
 
     return results
 
 
-def _search_youtube_shorts_via_ytdlp(query: str, max_results: int = 3) -> list[dict]:
-    """Search YouTube Shorts specifically."""
-    return _search_youtube_via_ytdlp(f"{query} #shorts", max_results)
-
-
-def _calculate_match_confidence(
-    original_caption: str,
-    original_duration: float,
-    candidate_title: str,
-    candidate_duration: float,
-) -> float:
-    """Calculate how likely this is the same or very similar video."""
-    score = 0.0
-
-    # Title/caption word overlap
-    if original_caption and candidate_title:
-        orig_words = set(re.findall(r"\w+", original_caption.lower()))
-        cand_words = set(re.findall(r"\w+", candidate_title.lower()))
-        if orig_words and cand_words:
-            overlap = len(orig_words & cand_words) / max(len(orig_words), 1)
-            score += overlap * 0.5  # Up to 0.5 from text match
-
-    # Duration similarity
-    if original_duration and candidate_duration and original_duration > 0:
-        dur_diff = abs(original_duration - candidate_duration)
-        if dur_diff <= 3:
-            score += 0.3  # Very close duration
-        elif dur_diff <= 10:
-            score += 0.2
-        elif dur_diff <= 30:
-            score += 0.1
-
-    # Base score for being found via keyword search
-    score += 0.2
-
-    return min(score, 1.0)
+# ---------------------------------------------------------------------------
+# Celery task
+# ---------------------------------------------------------------------------
 
 
 @app.task(name="tasks.source_search.search_source", bind=True, max_retries=2)
 def search_source(self, reel_id: str):
-    """Search for alternative sources of a viral reel on YouTube and other platforms."""
+    """Search for the exact same video on YouTube/TikTok.
+
+    Flow:
+      1. Load reel data (caption, duration, page username)
+      2. Build multiple targeted search queries
+      3. For each query, search YouTube (8 results per query)
+      4. Score ALL results by duration match + text similarity
+      5. Stop early if any result scores above the high-confidence threshold
+      6. Insert top 6 results as video_sources, sorted by confidence
+      7. Update reel status
+    """
     logger.info("Starting source search for reel %s", reel_id)
 
     try:
@@ -239,11 +309,13 @@ def search_source(self, reel_id: str):
                 logger.error("Reel %s not found", reel_id)
                 return {"error": "Reel not found"}
 
-            caption, duration, ig_url, ig_vid_id, username = (
-                row.caption, row.duration_seconds, row.ig_url,
-                row.ig_video_id, row.username,
-            )
+            caption = row.caption or ""
+            duration = row.duration_seconds or 0
+            ig_url = row.ig_url
+            ig_vid_id = row.ig_video_id
+            username = row.username or ""
 
+            # Create job record
             job_id = str(uuid.uuid4())
             session.execute(text("""
                 INSERT INTO jobs (id, celery_task_id, job_type, status, started_at, reference_id, reference_type)
@@ -253,46 +325,85 @@ def search_source(self, reel_id: str):
                 "now": datetime.now(timezone.utc), "ref_id": reel_id,
             })
 
-        # Build a *prioritised list* of search query candidates, then walk
-        # them until one returns hits. The old single-string approach gave
-        # up after the literal caption produced 0 results.
-        query_candidates = _extract_keywords(caption, username)
-        logger.info("Source search candidates for %s: %s", reel_id, query_candidates)
+        # ----- Build queries and search -----
+        query_candidates = _build_search_queries(caption, duration, username)
+        logger.info(
+            "Source search for reel %s — %d query candidates: %s",
+            reel_id, len(query_candidates), query_candidates,
+        )
 
-        all_results: list[dict] = []
+        all_candidates: list[dict] = []
         seen_urls: set[str] = set()
+        queries_tried = 0
         winning_query: str | None = None
+        early_stop = False
 
         for query in query_candidates:
-            yt_results = _search_youtube_via_ytdlp(query, max_results=5)
-            yt_shorts = _search_youtube_shorts_via_ytdlp(query, max_results=3)
-            batch = yt_results + yt_shorts
-            for r in batch:
-                if r["source_url"] not in seen_urls:
-                    all_results.append(r)
-                    seen_urls.add(r["source_url"])
-            if all_results:
+            queries_tried += 1
+            results = _search_youtube_via_ytdlp(query, max_results=8)
+
+            if not results:
+                logger.info("  query '%s' returned 0 results — next", query)
+                continue
+
+            # Score each result
+            batch_best_confidence = 0.0
+            for r in results:
+                if r["source_url"] in seen_urls:
+                    continue
+                seen_urls.add(r["source_url"])
+
+                confidence = _calculate_match_confidence(
+                    caption, duration,
+                    r.get("source_title", ""), r.get("duration", 0),
+                )
+                r["match_confidence"] = confidence
+                all_candidates.append(r)
+
+                if confidence > batch_best_confidence:
+                    batch_best_confidence = confidence
+
+            logger.info(
+                "  query '%s' → %d new results, best confidence=%.2f",
+                query, len(results), batch_best_confidence,
+            )
+
+            # Early stop: we found a very high-confidence match
+            if batch_best_confidence >= _HIGH_CONFIDENCE_THRESHOLD:
                 winning_query = query
+                early_stop = True
                 logger.info(
-                    "  query '%s' produced %d results — stopping cascade",
-                    query, len(all_results),
+                    "  HIGH-CONFIDENCE match found (%.2f) — stopping search",
+                    batch_best_confidence,
                 )
                 break
-            logger.info("  query '%s' returned 0 — trying next strategy", query)
 
-        logger.info("Found %d total results for reel %s (winning query=%s)", len(all_results), reel_id, winning_query)
+        if not early_stop and all_candidates:
+            winning_query = query_candidates[0]
 
-        # Calculate match confidence and store results
+        # Sort by confidence descending, keep top 6
+        all_candidates.sort(key=lambda c: c["match_confidence"], reverse=True)
+        top_candidates = all_candidates[:6]
+
+        logger.info(
+            "Source search for reel %s complete: %d total candidates, "
+            "keeping top %d, queries_tried=%d, winning_query='%s'",
+            reel_id, len(all_candidates), len(top_candidates),
+            queries_tried, winning_query,
+        )
+        if top_candidates:
+            logger.info(
+                "  Best match: confidence=%.2f title='%s' duration=%s url=%s",
+                top_candidates[0]["match_confidence"],
+                top_candidates[0].get("source_title", "")[:80],
+                top_candidates[0].get("duration"),
+                top_candidates[0].get("source_url"),
+            )
+
+        # ----- Store results -----
         with get_session() as session:
             stored_count = 0
-            for result in all_results:
-                confidence = _calculate_match_confidence(
-                    caption or "",
-                    duration or 0,
-                    result.get("source_title", ""),
-                    result.get("duration", 0),
-                )
-
+            for result in top_candidates:
                 session.execute(text("""
                     INSERT INTO video_sources (id, viral_reel_id, source_type, source_url,
                         source_title, source_thumbnail_url, resolution,
@@ -307,12 +418,12 @@ def search_source(self, reel_id: str):
                     "title": result.get("source_title"),
                     "thumb": result.get("source_thumbnail_url"),
                     "res": result.get("resolution"),
-                    "conf": round(confidence, 3),
+                    "conf": result["match_confidence"],
                     "now": datetime.now(timezone.utc),
                 })
                 stored_count += 1
 
-            # Update video status
+            # Update reel status
             new_status = "source_found" if stored_count > 0 else "failed"
             error_msg = None if stored_count > 0 else "No alternative sources found on YouTube"
 
@@ -330,7 +441,9 @@ def search_source(self, reel_id: str):
             "reel_id": reel_id,
             "sources_found": stored_count,
             "winning_query": winning_query,
-            "queries_tried": len(query_candidates),
+            "queries_tried": queries_tried,
+            "early_stop": early_stop,
+            "best_confidence": top_candidates[0]["match_confidence"] if top_candidates else 0,
         }
 
     except Exception as exc:
