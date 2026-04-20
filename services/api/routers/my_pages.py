@@ -640,7 +640,7 @@ async def get_dashboard(
     if current_reels:
         top = max(current_reels, key=lambda r: r.view_count or 0)
         top_reel = {
-            "ig_video_id": top.ig_code,
+            "ig_code": top.ig_code,
             "ig_url": f"https://www.instagram.com/reel/{top.ig_code}/",
             "view_count": top.view_count,
             "like_count": top.like_count,
@@ -701,13 +701,23 @@ async def get_dashboard(
         followers_delta = latest_followers - prev_followers
         followers_delta_pct = _pct(latest_followers, prev_followers)
 
+    # BUG FIX 1: Use current follower_count from user_pages (most recent),
+    # not stale snapshot data
+    followers = page.follower_count or followers
+
+    # BUG FIX 2: has_data should be false when no reels in the period
+    has_data = len(current_reels) > 0
+
+    # BUG FIX 3: days field should match actual date span (inclusive)
+    actual_days = (end_date - start_date).days + 1
+
     return DashboardResponse(
         page_id=str(page.id),
         ig_username=page.ig_username,
         period={
             "from_date": start_date.isoformat(),
             "to_date": end_date.isoformat(),
-            "days": period_days,
+            "days": actual_days,
         },
         followers=followers,
         followers_delta=followers_delta,
@@ -727,7 +737,8 @@ async def get_dashboard(
         engagement_delta=None,
         top_reel=top_reel,
         daily_snapshots=_build_daily(current_reels, start_date, end_date),
-        has_data=len(current_reels) > 0 or followers > 0,
+        has_data=has_data,
+        # BUG FIX 4: use ig_code consistently (matches reels array field name)
         reels=[{
             "ig_code": r.ig_code,
             "ig_url": f"https://www.instagram.com/reel/{r.ig_code}/",
@@ -793,7 +804,7 @@ async def refresh_stats_now(
     # Scrape reels
     reels_count = 0
     if user_pk:
-        reels = await get_user_reels(str(user_pk))
+        reels = await get_user_reels(str(user_pk), max_pages=5)  # 5 pages = ~60 reels, fast refresh
 
         for reel in reels:
             code = reel.get("shortcode") or reel.get("code", "")
