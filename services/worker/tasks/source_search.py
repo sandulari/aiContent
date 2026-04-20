@@ -216,8 +216,21 @@ def _calculate_match_confidence(
 # ---------------------------------------------------------------------------
 
 
+def _parse_duration_text(text: str) -> int:
+    """Parse "M:SS" or "H:MM:SS" to seconds."""
+    parts = text.strip().split(":")
+    try:
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + int(parts[1])
+        elif len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+    except ValueError:
+        pass
+    return 0
+
+
 def _search_youtube_via_http(query: str, max_results: int = 8) -> list[dict]:
-    """Search YouTube via HTTP scraping — works even when yt-dlp is bot-blocked."""
+    """Search YouTube via HTTP — parse ytInitialData JSON for accurate results."""
     import urllib.parse
     import httpx
 
@@ -226,7 +239,10 @@ def _search_youtube_via_http(query: str, max_results: int = 8) -> list[dict]:
         encoded = urllib.parse.quote_plus(query)
         resp = httpx.get(
             f"https://www.youtube.com/results?search_query={encoded}",
-            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
+            headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
             timeout=15,
             follow_redirects=True,
         )
@@ -234,64 +250,56 @@ def _search_youtube_via_http(query: str, max_results: int = 8) -> list[dict]:
             logger.warning("YouTube HTTP search failed: %d", resp.status_code)
             return []
 
-        # Extract video IDs from the page
-        video_ids = list(dict.fromkeys(re.findall(r'watch\?v=([a-zA-Z0-9_-]{11})', resp.text)))[:max_results]
+        # Parse ytInitialData JSON — contains full search results
+        yt_data_match = re.search(r"var ytInitialData = ({.*?});", resp.text)
+        if yt_data_match:
+            try:
+                data = json.loads(yt_data_match.group(1))
+                contents = (
+                    data.get("contents", {})
+                    .get("twoColumnSearchResultsRenderer", {})
+                    .get("primaryContents", {})
+                    .get("sectionListRenderer", {})
+                    .get("contents", [{}])[0]
+                    .get("itemSectionRenderer", {})
+                    .get("contents", [])
+                )
+                for item in contents[:max_results]:
+                    vid = item.get("videoRenderer", {})
+                    if not vid:
+                        continue
+                    vid_id = vid.get("videoId", "")
+                    if not vid_id:
+                        continue
+                    title = vid.get("title", {}).get("runs", [{}])[0].get("text", "")
+                    dur_text = vid.get("lengthText", {}).get("simpleText", "")
+                    duration = _parse_duration_text(dur_text)
 
-        # Extract titles — try multiple patterns since YouTube's HTML varies
-        titles = {}
-        # Pattern 1: runs format
-        for match in re.finditer(r'"videoId":"([^"]{11})"[^}]*?"title":\{"runs":\[\{"text":"([^"]{3,200})"\}', resp.text):
-            if match.group(1) not in titles:
-                titles[match.group(1)] = match.group(2)
-        # Pattern 2: simpleText format
-        for match in re.finditer(r'"videoId":"([^"]{11})"[^}]*?"title":\{"simpleText":"([^"]{3,200})"\}', resp.text):
-            if match.group(1) not in titles:
-                titles[match.group(1)] = match.group(2)
-        # Pattern 3: accessibilityData label (usually contains full title)
-        for match in re.finditer(r'"videoId":"([^"]{11})".*?"accessibilityData":\{"label":"([^"]{10,300})"', resp.text):
-            vid_id, label = match.group(1), match.group(2)
-            if vid_id not in titles and "views" not in label.lower()[:20]:
-                # Clean up — accessibility labels often include "by Channel - X views - Y ago"
-                clean = label.split(" by ")[0].strip()
-                if len(clean) > 5:
-                    titles[vid_id] = clean
+                    results.append({
+                        "source_type": "youtube",
+                        "source_url": f"https://www.youtube.com/watch?v={vid_id}",
+                        "source_title": title or f"YouTube Video {vid_id}",
+                        "source_thumbnail_url": f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg",
+                        "resolution": None,
+                        "fps": None,
+                        "duration": duration,
+                    })
+            except (json.JSONDecodeError, KeyError, IndexError) as e:
+                logger.warning("Failed to parse ytInitialData: %s", e)
 
-        # Extract durations — try multiple patterns
-        durations = {}
-        # Pattern 1: lengthText accessibility
-        for match in re.finditer(r'"videoId":"([^"]{11})".*?"lengthText".*?"label":"([^"]*(?:second|minute|hour)[^"]*)"', resp.text):
-            vid_id, dur_text = match.group(1), match.group(2)
-            total = 0
-            hours = re.search(r'(\d+)\s*hour', dur_text)
-            mins = re.search(r'(\d+)\s*minute', dur_text)
-            secs = re.search(r'(\d+)\s*second', dur_text)
-            if hours: total += int(hours.group(1)) * 3600
-            if mins: total += int(mins.group(1)) * 60
-            if secs: total += int(secs.group(1))
-            if total > 0:
-                durations[vid_id] = total
-        # Pattern 2: simpleText "M:SS" format
-        for match in re.finditer(r'"videoId":"([^"]{11})".*?"lengthText":\{"simpleText":"(\d+:\d{2})"\}', resp.text):
-            vid_id, time_str = match.group(1), match.group(2)
-            if vid_id not in durations:
-                parts = time_str.split(":")
-                durations[vid_id] = int(parts[0]) * 60 + int(parts[1])
-
-        # Build results
-        for vid_id in video_ids:
-            url = f"https://www.youtube.com/watch?v={vid_id}"
-            title = titles.get(vid_id, f"YouTube Video {vid_id}")
-            duration = durations.get(vid_id, 0)
-
-            results.append({
-                "source_type": "youtube",
-                "source_url": url,
-                "source_title": title,
-                "source_thumbnail_url": f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg",
-                "resolution": None,
-                "fps": None,
-                "duration": duration,
-            })
+        # Fallback: extract video IDs from raw HTML if JSON parsing failed
+        if not results:
+            video_ids = list(dict.fromkeys(re.findall(r'watch\?v=([a-zA-Z0-9_-]{11})', resp.text)))[:max_results]
+            for vid_id in video_ids:
+                results.append({
+                    "source_type": "youtube",
+                    "source_url": f"https://www.youtube.com/watch?v={vid_id}",
+                    "source_title": f"YouTube Video {vid_id}",
+                    "source_thumbnail_url": f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg",
+                    "resolution": None,
+                    "fps": None,
+                    "duration": 0,
+                })
 
     except Exception as e:
         logger.error("YouTube HTTP search error: %s", e)
