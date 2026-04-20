@@ -251,21 +251,21 @@ export default function ReelDetailPage() {
         </Card>
       )}
 
-      {/* Search failed (no spinner — clear failure UI with retry) */}
+      {/* Search failed — clear failure UI with retry */}
       {searchFailed && (
         <Card>
           <div className="flex flex-col items-center py-8 gap-4">
             <div className="text-center max-w-md">
-              <p className="text-sm font-semibold text-[#f85149] mb-1">No alternative sources found</p>
+              <p className="text-sm font-semibold text-[#f85149] mb-1">Source search failed</p>
               <p className="text-xs text-[#484f58] leading-relaxed">
-                We couldn't match this reel to a video on YouTube, TikTok, or Google Video.
-                The caption may be too generic, or the original may not have been re-uploaded
-                anywhere outside Instagram.
+                We couldn&apos;t match this reel to a video on YouTube, TikTok, or Google Video right now.
+                This can happen when the search service is busy or the caption is too generic.
+                Give it another try — results often improve on a second attempt.
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <Button variant="secondary" onClick={handleRetrySearch} loading={findingSource}>
-                Try search again
+            <div className="flex items-center gap-3">
+              <Button onClick={handleRetrySearch} loading={findingSource}>
+                Retry Search
               </Button>
               {reel.ig_url && (
                 <a
@@ -274,7 +274,7 @@ export default function ReelDetailPage() {
                   rel="noopener noreferrer"
                   className="text-xs text-[#58a6ff] hover:underline"
                 >
-                  View on Instagram ↗
+                  View on Instagram
                 </a>
               )}
             </div>
@@ -282,31 +282,76 @@ export default function ReelDetailPage() {
         </Card>
       )}
 
-      {/* Sources */}
+      {/* Best source — most likely the same video */}
       {hasSources && !canEdit && !isDownloading && (
-        <div className="space-y-3">
-          <h2 className="text-sm font-medium text-[#e6edf3]">Alternative Sources ({reel.sources.length})</h2>
-          {reel.sources.map((s: ReelSource) => (
-            <Card key={s.id}>
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1 min-w-0 space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium px-1.5 py-0.5 bg-[#58a6ff]/10 text-[#58a6ff] rounded">{s.source_type}</span>
-                    {s.match_confidence != null && (
-                      <span className={`text-xs font-medium ${s.match_confidence >= 0.9 ? "text-[#3fb950]" : s.match_confidence >= 0.7 ? "text-[#d29922]" : "text-[#f78166]"}`}>
-                        {Math.round(s.match_confidence * 100)}% match
-                      </span>
-                    )}
+        <Card>
+          <div className="space-y-3">
+            <h3 className="text-sm font-medium text-[#e6edf3]">Download This Video</h3>
+            <p className="text-[11px] text-[#484f58]">Found on YouTube — clean copy without Instagram fingerprint</p>
+            {(() => {
+              const best = reel.sources[0]; // Already sorted by confidence
+              return (
+                <div className="flex items-center gap-3 bg-[#0d1117] rounded-lg p-3">
+                  {/* YouTube thumbnail */}
+                  {best.source_url.includes("youtube") && (
+                    <img
+                      src={`https://img.youtube.com/vi/${best.source_url.match(/[?&]v=([^&]+)/)?.[1] || ""}/mqdefault.jpg`}
+                      alt="" className="w-32 h-20 object-cover rounded-md flex-shrink-0"
+                    />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-[#e6edf3] font-medium line-clamp-2">{best.source_title || "Video"}</p>
+                    <div className="flex items-center gap-2 mt-1 text-[10px] text-[#484f58]">
+                      <span className="uppercase font-medium text-[#58a6ff]">{best.source_type}</span>
+                      <span>{Math.round((best.match_confidence || 0) * 100)}% match</span>
+                    </div>
                   </div>
-                  <p className="text-sm text-[#e6edf3] truncate">{s.source_title || "Untitled"}</p>
-                  <a href={s.source_url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#58a6ff] hover:underline">Preview</a>
+                  <div className="flex gap-2 flex-shrink-0">
+                    <a href={best.source_url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#7d8590] hover:text-[#e6edf3] px-2 py-1.5 border border-[#30363d] rounded-md">
+                      Preview
+                    </a>
+                    <Button size="sm" onClick={() => handleDownload(best.id)} loading={downloadingId === best.id}>
+                      Download
+                    </Button>
+                  </div>
                 </div>
-                <Button size="sm" onClick={() => handleDownload(s.id)} loading={downloadingId === s.id} disabled={isDownloading}>
-                  Save to Library
-                </Button>
+              );
+            })()}
+          </div>
+        </Card>
+      )}
+
+      {/* Similar content — alternative videos on the same topic */}
+      {hasSources && reel.sources.length > 1 && !canEdit && (
+        <div>
+          <h3 className="text-sm font-medium text-[#e6edf3] mb-3">Similar Content</h3>
+          <div className="space-y-2">
+            {reel.sources.slice(1).map((source) => (
+              <div key={source.id} className="flex items-center gap-3 bg-[#161b22] border border-[#21262d] rounded-lg p-3">
+                {source.source_url.includes("youtube") && (
+                  <img
+                    src={`https://img.youtube.com/vi/${source.source_url.match(/[?&]v=([^&]+)/)?.[1] || ""}/default.jpg`}
+                    alt="" className="w-20 h-14 object-cover rounded flex-shrink-0"
+                  />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-[#e6edf3] font-medium line-clamp-1">{source.source_title || "Video"}</p>
+                  <div className="flex items-center gap-2 mt-0.5 text-[10px] text-[#484f58]">
+                    <span className="uppercase text-[#58a6ff]">{source.source_type}</span>
+                    <span>{Math.round((source.match_confidence || 0) * 100)}% match</span>
+                  </div>
+                </div>
+                <div className="flex gap-2 flex-shrink-0">
+                  <a href={source.source_url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-[#7d8590] hover:text-[#e6edf3] px-2 py-1 border border-[#30363d] rounded">
+                    Preview
+                  </a>
+                  <Button size="sm" onClick={() => handleDownload(source.id)} loading={downloadingId === source.id}>
+                    Save
+                  </Button>
+                </div>
               </div>
-            </Card>
-          ))}
+            ))}
+          </div>
         </div>
       )}
     </div>
