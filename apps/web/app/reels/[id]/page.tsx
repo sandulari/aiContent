@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -69,6 +69,15 @@ export default function ReelDetailPage() {
     })();
   }, []);
 
+  // Auto-search for sources when reel loads (if no sources found yet and not already downloaded)
+  const autoSearchTriggered = useRef(false);
+  useEffect(() => {
+    if (!reel || autoSearchTriggered.current) return;
+    if (reel.sources.length > 0 || reel.status === "downloaded" || reel.status === "done" || reel.status === "searching_source") return;
+    autoSearchTriggered.current = true;
+    handleFindSources();
+  }, [reel]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleFindSources = async () => {
     setFindingSource(true);
     try {
@@ -100,25 +109,6 @@ export default function ReelDetailPage() {
     setDownloadingId(sourceId);
     try {
       await api.reels.download(reelId, sourceId);
-    } catch (e: any) {
-      console.error("Failed to download:", e?.message || "unknown error");
-      setError(e?.message || "Download failed. Please try again.");
-      setDownloadingId(null);
-    }
-  };
-
-  const handleDownloadDirect = async () => {
-    setDownloadingId("direct");
-    try {
-      const res = await api.reels.downloadDirect(reelId);
-      if (res.status === "already_downloaded") {
-        // Already downloaded — go straight to editor
-        handleOpenEditor();
-        return;
-      }
-      // Polling will pick up the status change
-      const d = await api.reels.get(reelId);
-      setReel(d);
     } catch (e: any) {
       console.error("Failed to download:", e?.message || "unknown error");
       setError(e?.message || "Download failed. Please try again.");
@@ -246,27 +236,7 @@ export default function ReelDetailPage() {
         </Card>
       )}
 
-      {/* Download directly from Instagram */}
-      {!canEdit && !isDownloading && (
-        <Card>
-          <div className="flex flex-col items-center py-6 gap-3">
-            <p className="text-sm text-[#e6edf3] font-medium">Ready to use this reel?</p>
-            <p className="text-xs text-[#484f58] max-w-md text-center">Download the video and open it in the editor with your template. Edit, customize, and export.</p>
-            <Button onClick={handleDownloadDirect} loading={downloadingId === "direct"} className="mt-2 px-8" size="lg">
-              Download & Edit This Reel
-            </Button>
-          </div>
-        </Card>
-      )}
-
-      {/* Alternative sources (optional — search YouTube/TikTok for a cleaner copy) */}
-      {!canEdit && !isDownloading && !hasSources && !isSearching && !searchFailed && (
-        <div className="text-center">
-          <button onClick={handleFindSources} className="text-xs text-[#484f58] hover:text-[#7d8590] transition-colors">
-            Or search for alternative sources on YouTube/TikTok →
-          </button>
-        </div>
-      )}
+      {/* No sources yet and not searching — this shouldn't show because auto-search triggers on load */}
 
       {/* Searching (in progress) */}
       {isSearching && (
