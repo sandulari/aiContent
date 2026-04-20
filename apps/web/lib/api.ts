@@ -121,6 +121,7 @@ export interface ReelDetail {
 
 export interface ReelSource {
   id: string; source_type: string; source_url: string; source_title: string | null;
+  source_thumbnail_url: string | null;
   match_confidence: number | null; is_selected: boolean; found_at: string;
 }
 

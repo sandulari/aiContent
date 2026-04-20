@@ -61,7 +61,8 @@ async def get_reel(reel_id: UUID, current_user: User = Depends(get_current_user)
         "status": reel.status, "source_page": source_page,
         "sources": [
             {"id": str(s.id), "source_type": s.source_type, "source_url": s.source_url,
-             "source_title": s.source_title, "match_confidence": s.match_confidence,
+             "source_title": s.source_title, "source_thumbnail_url": s.source_thumbnail_url,
+             "match_confidence": s.match_confidence,
              "is_selected": s.is_selected, "found_at": str(s.found_at)}
             for s in sorted(reel.sources, key=lambda x: x.match_confidence or 0, reverse=True)
         ],
