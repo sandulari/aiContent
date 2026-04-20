@@ -237,39 +237,50 @@ def _search_youtube_via_http(query: str, max_results: int = 8) -> list[dict]:
         # Extract video IDs from the page
         video_ids = list(dict.fromkeys(re.findall(r'watch\?v=([a-zA-Z0-9_-]{11})', resp.text)))[:max_results]
 
-        # Extract titles from the JSON data embedded in the page
+        # Extract titles — try multiple patterns since YouTube's HTML varies
         titles = {}
-        for match in re.finditer(r'"videoId":"([^"]+)".*?"title":\{"runs":\[\{"text":"([^"]+)"\}', resp.text):
-            vid_id, title = match.group(1), match.group(2)
-            if vid_id not in titles:
-                titles[vid_id] = title
+        # Pattern 1: runs format
+        for match in re.finditer(r'"videoId":"([^"]{11})"[^}]*?"title":\{"runs":\[\{"text":"([^"]{3,200})"\}', resp.text):
+            if match.group(1) not in titles:
+                titles[match.group(1)] = match.group(2)
+        # Pattern 2: simpleText format
+        for match in re.finditer(r'"videoId":"([^"]{11})"[^}]*?"title":\{"simpleText":"([^"]{3,200})"\}', resp.text):
+            if match.group(1) not in titles:
+                titles[match.group(1)] = match.group(2)
+        # Pattern 3: accessibilityData label (usually contains full title)
+        for match in re.finditer(r'"videoId":"([^"]{11})".*?"accessibilityData":\{"label":"([^"]{10,300})"', resp.text):
+            vid_id, label = match.group(1), match.group(2)
+            if vid_id not in titles and "views" not in label.lower()[:20]:
+                # Clean up — accessibility labels often include "by Channel - X views - Y ago"
+                clean = label.split(" by ")[0].strip()
+                if len(clean) > 5:
+                    titles[vid_id] = clean
 
-        # Extract durations from the search results page HTML
-        # YouTube embeds lengthText with accessibility labels like "2 minutes, 30 seconds"
+        # Extract durations — try multiple patterns
         durations = {}
-        for match in re.finditer(
-            r'"videoId":"([^"]+)".*?"lengthText":\{"accessibility":\{"accessibilityData":\{"label":"([^"]+)"\}\}',
-            resp.text,
-        ):
-            vid_id = match.group(1)
-            dur_text = match.group(2)
+        # Pattern 1: lengthText accessibility
+        for match in re.finditer(r'"videoId":"([^"]{11})".*?"lengthText".*?"label":"([^"]*(?:second|minute|hour)[^"]*)"', resp.text):
+            vid_id, dur_text = match.group(1), match.group(2)
             total = 0
             hours = re.search(r'(\d+)\s*hour', dur_text)
             mins = re.search(r'(\d+)\s*minute', dur_text)
             secs = re.search(r'(\d+)\s*second', dur_text)
-            if hours:
-                total += int(hours.group(1)) * 3600
-            if mins:
-                total += int(mins.group(1)) * 60
-            if secs:
-                total += int(secs.group(1))
+            if hours: total += int(hours.group(1)) * 3600
+            if mins: total += int(mins.group(1)) * 60
+            if secs: total += int(secs.group(1))
             if total > 0:
                 durations[vid_id] = total
+        # Pattern 2: simpleText "M:SS" format
+        for match in re.finditer(r'"videoId":"([^"]{11})".*?"lengthText":\{"simpleText":"(\d+:\d{2})"\}', resp.text):
+            vid_id, time_str = match.group(1), match.group(2)
+            if vid_id not in durations:
+                parts = time_str.split(":")
+                durations[vid_id] = int(parts[0]) * 60 + int(parts[1])
 
-        # Build results from extracted page data (no per-video yt-dlp calls)
+        # Build results
         for vid_id in video_ids:
             url = f"https://www.youtube.com/watch?v={vid_id}"
-            title = titles.get(vid_id, "")
+            title = titles.get(vid_id, f"YouTube Video {vid_id}")
             duration = durations.get(vid_id, 0)
 
             results.append({
@@ -439,6 +450,7 @@ def _search_google_video(query: str, max_results: int = 8) -> list[dict]:
             seen.add(url)
 
             source_type = "youtube"
+            thumb = None
             if "tiktok.com" in url:
                 source_type = "tiktok"
             elif "vimeo.com" in url:
@@ -446,11 +458,25 @@ def _search_google_video(query: str, max_results: int = 8) -> list[dict]:
             elif "dailymotion.com" in url:
                 source_type = "dailymotion"
 
+            # Extract YouTube video ID for thumbnail
+            yt_match = re.search(r'(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})', url)
+            if yt_match:
+                thumb = f"https://img.youtube.com/vi/{yt_match.group(1)}/hqdefault.jpg"
+
+            # Try to extract title from Google's result text near this URL
+            title = ""
+            url_escaped = re.escape(url[:40])
+            title_match = re.search(rf'(?:<h3[^>]*>|<div[^>]*class="[^"]*">)([^<]{{5,150}})</(?:h3|div)>.*?{url_escaped}', resp.text, re.DOTALL)
+            if not title_match:
+                title_match = re.search(rf'{url_escaped}.*?<h3[^>]*>([^<]{{5,150}})</h3>', resp.text, re.DOTALL)
+            if title_match:
+                title = title_match.group(1).strip()
+
             results.append({
                 "source_type": source_type,
                 "source_url": url,
-                "source_title": "",
-                "source_thumbnail_url": None,
+                "source_title": title or (f"YouTube Video {yt_match.group(1)}" if yt_match else "Video"),
+                "source_thumbnail_url": thumb,
                 "resolution": None,
                 "fps": None,
                 "duration": 0,
