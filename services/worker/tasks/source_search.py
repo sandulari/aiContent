@@ -523,20 +523,19 @@ def search_source(self, reel_id: str):
         winning_query: str | None = None
         early_stop = False
 
-        for query in query_candidates:
+        # FAST SEARCH: Use only HTTP-based searches (no yt-dlp search which is
+        # slow and gets bot-blocked). yt-dlp is still used for DOWNLOADING.
+        # Try max 3 queries, YouTube HTTP + Google Video only (fastest).
+        for query in query_candidates[:3]:
             queries_tried += 1
 
-            # --- YouTube search ---
-            yt_results = _search_youtube_via_ytdlp(query, max_results=8)
+            # YouTube HTTP search (fast — single HTTP request)
+            yt_results = _search_youtube_via_http(query, max_results=8)
 
-            # --- TikTok search ---
-            tt_results = _search_tiktok_via_ytdlp(query, max_results=3)
-
-            # --- Google Video search (catches YT, TikTok, Vimeo, Dailymotion) ---
+            # Google Video search (fast — single HTTP request, catches all platforms)
             gv_results = _search_google_video(query, max_results=5)
 
-            # Combine all platform results for this query
-            results = yt_results + tt_results + gv_results
+            results = yt_results + gv_results
 
             if not results:
                 logger.info("  query '%s' returned 0 results — next", query)
@@ -560,19 +559,20 @@ def search_source(self, reel_id: str):
                     batch_best_confidence = confidence
 
             logger.info(
-                "  query '%s' → %d new results (yt=%d tt=%d gv=%d), best confidence=%.2f",
-                query, len(results), len(yt_results), len(tt_results),
-                len(gv_results), batch_best_confidence,
+                "  query '%s' → %d results (yt=%d gv=%d), best=%.2f",
+                query, len(results), len(yt_results), len(gv_results),
+                batch_best_confidence,
             )
 
-            # Early stop: we found a very high-confidence match
+            # Early stop if we found a good match
             if batch_best_confidence >= _HIGH_CONFIDENCE_THRESHOLD:
                 winning_query = query
                 early_stop = True
-                logger.info(
-                    "  HIGH-CONFIDENCE match found (%.2f) — stopping search",
-                    batch_best_confidence,
-                )
+                break
+
+            # Also stop if we already have 6+ candidates (enough)
+            if len(all_candidates) >= 6:
+                winning_query = query
                 break
 
         if not early_stop and all_candidates:
