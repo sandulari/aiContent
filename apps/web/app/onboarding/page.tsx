@@ -62,7 +62,7 @@ export default function OnboardingPage() {
       <div className="w-full max-w-md px-6">
         {/* Logo */}
         <div className="text-center mb-10">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#16a34a] to-[#4ade80] flex items-center justify-center mx-auto mb-4 shadow-lg shadow-green-900/20">
+          <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-[#16a34a] to-[#4ade80] flex items-center justify-center mx-auto mb-4">
             <span className="text-xl font-black text-white">SP</span>
           </div>
         </div>
@@ -75,7 +75,7 @@ export default function OnboardingPage() {
               <p className="text-sm text-[#7d8590]">Enter your Instagram username and we'll find the best viral reels for your page</p>
             </div>
 
-            <div className="bg-[#161b22] border border-[#21262d] rounded-xl p-6 space-y-4">
+            <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-6 space-y-4">
               <div>
                 <label className="block text-xs text-[#7d8590] mb-1.5">Instagram Username</label>
                 <div className="relative">

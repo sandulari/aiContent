@@ -19,11 +19,11 @@ export function Sidebar() {
   const router = useRouter();
 
   return (
-    <aside className="w-[220px] min-w-[220px] h-screen bg-[#010409]/95 backdrop-blur-xl border-r border-[#1b2028] flex flex-col">
+    <aside className="w-[220px] min-w-[220px] h-screen bg-[#0d1117] border-r border-[#21262d] flex flex-col">
       {/* Brand */}
-      <div className="px-5 py-6 border-b border-[#1b2028]">
+      <div className="px-5 py-6 border-b border-[#21262d]">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#16a34a] to-[#4ade80] flex items-center justify-center shadow-lg shadow-green-900/20 ring-1 ring-green-400/20">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#16a34a] to-[#4ade80] flex items-center justify-center">
             <span className="text-xs font-black text-white">SP</span>
           </div>
           <div>
@@ -39,8 +39,8 @@ export function Sidebar() {
           return (
             <Link key={item.href} href={item.href}
               className={clsx(
-                "flex items-center gap-2.5 px-3 py-2.5 text-[12px] font-medium rounded-xl transition-all duration-150 relative tracking-wide",
-                active ? "bg-[#141414] text-[#58a6ff]" : "text-[#555] hover:text-[#999] hover:bg-[#111]"
+                "flex items-center gap-2.5 px-3 py-2.5 text-[12px] font-medium rounded-lg transition-colors duration-150 relative tracking-wide",
+                active ? "bg-[#161b22] text-[#58a6ff]" : "text-[#7d8590] hover:text-[#c9d1d9] hover:bg-[#161b22]"
               )}>
               {active && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#58a6ff] rounded-r" />}
               <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -52,9 +52,9 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="px-3 py-4 border-t border-[#1b2028]">
+      <div className="px-3 py-4 border-t border-[#21262d]">
         <button onClick={async () => { try { await api.auth.logout(); } catch {} router.push("/auth/login"); }}
-          className="flex items-center gap-2.5 px-3 py-2 text-[12px] font-medium text-[#333] hover:text-[#f87171] rounded-xl transition-colors w-full tracking-wide">
+          className="flex items-center gap-2.5 px-3 py-2 text-[12px] font-medium text-[#484f58] hover:text-[#f87171] rounded-lg transition-colors duration-150 w-full tracking-wide">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
           </svg>

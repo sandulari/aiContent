@@ -23,7 +23,7 @@ export function SkeletonText({ lines = 3, className = "" }: { lines?: number; cl
 
 export function SkeletonCard({ className = "" }: { className?: string }) {
   return (
-    <div className={`bg-[#161b22] border border-[#21262d] rounded-2xl p-6 space-y-4 ${className}`}>
+    <div className={`bg-[#161b22] border border-[#21262d] rounded-lg p-6 space-y-4 ${className}`}>
       <Skeleton className="h-5 w-2/3" />
       <SkeletonText lines={2} />
       <div className="flex gap-2 pt-2">
@@ -36,7 +36,7 @@ export function SkeletonCard({ className = "" }: { className?: string }) {
 
 export function SkeletonTable({ rows = 5 }: { rows?: number }) {
   return (
-    <div className="bg-[#161b22] border border-[#21262d] rounded-2xl overflow-hidden">
+    <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
       <div className="border-b border-[#21262d] px-4 py-3 flex gap-6">
         <Skeleton className="h-3 w-32" />
         <Skeleton className="h-3 w-16" />
@@ -79,7 +79,7 @@ export function SkeletonDashboard() {
         {/* Primary stat cards — 4 columns */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="bg-[#161b22] border border-[#21262d] rounded-xl p-5 space-y-3">
+            <div key={i} className="bg-[#161b22] border border-[#21262d] rounded-lg p-5 space-y-3">
               <Skeleton className="h-3 w-24" />
               <Skeleton className="h-8 w-20" />
               <Skeleton className="h-3 w-28" />
@@ -90,7 +90,7 @@ export function SkeletonDashboard() {
         {/* Secondary stat cards — 3 columns */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-[#161b22] border border-[#21262d] rounded-xl p-5 space-y-3">
+            <div key={i} className="bg-[#161b22] border border-[#21262d] rounded-lg p-5 space-y-3">
               <Skeleton className="h-3 w-20" />
               <Skeleton className="h-8 w-16" />
               <Skeleton className="h-3 w-24" />
@@ -101,7 +101,7 @@ export function SkeletonDashboard() {
         {/* Top Performing Reel */}
         <div>
           <Skeleton className="h-4 w-40 mb-3" />
-          <div className="bg-[#161b22] border border-[#21262d] rounded-xl p-5 space-y-3">
+          <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-5 space-y-3">
             <Skeleton className="h-4 w-3/4" />
             <Skeleton className="h-3 w-1/2" />
             <div className="flex gap-4">
@@ -115,7 +115,7 @@ export function SkeletonDashboard() {
         {/* Reels Table */}
         <div>
           <Skeleton className="h-4 w-36 mb-3" />
-          <div className="bg-[#161b22] border border-[#21262d] rounded-xl overflow-hidden">
+          <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
             {/* Table header */}
             <div className="flex gap-4 px-4 py-2.5 border-b border-[#21262d]">
               <Skeleton className="h-3 w-32 flex-1" />
@@ -153,7 +153,7 @@ export function SkeletonDiscover() {
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {Array.from({ length: 9 }).map((_, i) => (
-          <div key={i} className="bg-[#161b22] border border-[#21262d] rounded-2xl overflow-hidden">
+          <div key={i} className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
             <Skeleton className="h-48 w-full rounded-none" />
             <div className="p-4 space-y-3">
               <div className="flex justify-between">
@@ -180,7 +180,7 @@ export function SkeletonSettings() {
         <Skeleton className="h-7 w-32" />
         <Skeleton className="h-3.5 w-64 mt-2" />
       </div>
-      <div className="bg-[#161b22] border border-[#21262d] rounded-2xl p-6 space-y-4">
+      <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-6 space-y-4">
         <Skeleton className="h-5 w-40" />
         <div className="flex gap-2">
           <Skeleton className="h-10 w-32 rounded-lg" />
@@ -189,7 +189,7 @@ export function SkeletonSettings() {
         </div>
       </div>
       {[1,2].map(i => (
-        <div key={i} className="bg-[#161b22] border border-[#21262d] rounded-2xl p-6 space-y-3">
+        <div key={i} className="bg-[#161b22] border border-[#21262d] rounded-lg p-6 space-y-3">
           <Skeleton className="h-4 w-32" />
           {[1,2].map(j => (
             <div key={j} className="flex justify-between items-center p-3 bg-[#0d1117] rounded-lg">
@@ -216,7 +216,7 @@ export function SkeletonEditor() {
         ))}
       </div>
       <div className="flex-1 flex items-center justify-center">
-        <Skeleton className="w-[360px] h-[640px] rounded-xl" />
+        <Skeleton className="w-[360px] h-[640px] rounded-lg" />
       </div>
       <div className="w-72 border-l border-[#21262d] p-3 space-y-4">
         <Skeleton className="h-5 w-24" />
@@ -235,7 +235,7 @@ export function SkeletonReelDetail() {
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-5">
       <Skeleton className="h-4 w-16" />
-      <div className="bg-[#161b22] border border-[#21262d] rounded-2xl p-6 space-y-4">
+      <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-6 space-y-4">
         <div className="flex items-start justify-between">
           <div className="flex-1 space-y-2">
             <Skeleton className="h-4 w-full" />
@@ -250,7 +250,7 @@ export function SkeletonReelDetail() {
           <Skeleton className="h-3 w-24" />
         </div>
       </div>
-      <div className="bg-[#161b22] border border-[#21262d] rounded-2xl p-6 space-y-3">
+      <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-6 space-y-3">
         <Skeleton className="h-5 w-40" />
         <Skeleton className="h-3 w-64" />
         <div className="flex items-center gap-3 bg-[#0d1117] rounded-lg p-3">

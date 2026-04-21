@@ -18,7 +18,7 @@ export function Modal({ isOpen, onClose, title, children, className }: ModalProp
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className={clsx("relative z-10 w-full max-w-md bg-[#161b22] border border-[#21262d] rounded-xl shadow-2xl", className)}>
+      <div className={clsx("relative z-10 w-full max-w-md bg-[#161b22] border border-[#21262d] rounded-lg shadow-[0_2px_8px_rgba(0,0,0,0.1)]", className)}>
         {title && (
           <div className="flex items-center justify-between px-5 py-4 border-b border-[#21262d]">
             <h2 className="text-base font-semibold text-[#e6edf3]">{title}</h2>

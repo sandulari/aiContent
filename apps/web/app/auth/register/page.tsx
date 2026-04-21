@@ -24,13 +24,11 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#010409] flex">
+    <div className="min-h-screen bg-[#0d1117] flex">
       <div className="hidden lg:flex lg:w-[48%] items-center justify-center p-16 relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-[#010409] via-[#0d1117] to-[#010409]" />
-        <div className="absolute inset-0 opacity-[0.04] bg-[radial-gradient(ellipse_at_top_left,_rgba(74,222,128,0.15),_transparent_50%),_radial-gradient(ellipse_at_bottom_right,_rgba(88,166,255,0.1),_transparent_50%)]" />
-        <div className="absolute inset-0 opacity-[0.03]" style={{backgroundImage: "url(\"data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E\")"}} />
+        <div className="absolute inset-0 bg-[#0d1117]" />
         <div className="relative max-w-md">
-          <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-[#16a34a] to-[#4ade80] flex items-center justify-center mb-10 shadow-lg shadow-green-900/30 ring-1 ring-green-400/20">
+          <div className="w-14 h-14 rounded-lg bg-gradient-to-br from-[#16a34a] to-[#4ade80] flex items-center justify-center mb-10">
             <span className="text-lg font-black text-white">SP</span>
           </div>
           <h1 className="text-[10px] text-[#4ade80] font-bold uppercase tracking-[0.3em] mb-4">Shadow Pages</h1>
@@ -56,7 +54,7 @@ export default function RegisterPage() {
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="w-full max-w-[400px]">
           <div className="lg:hidden mb-10 text-center">
-            <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-[#16a34a] to-[#4ade80] flex items-center justify-center mx-auto mb-3 ring-1 ring-green-400/20">
+            <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-[#16a34a] to-[#4ade80] flex items-center justify-center mx-auto mb-3">
               <span className="text-sm font-black text-white">SP</span>
             </div>
             <p className="text-[9px] text-[#4ade80] font-bold uppercase tracking-[0.3em]">Shadow Pages</p>
@@ -71,27 +69,27 @@ export default function RegisterPage() {
             <div>
               <label className="block text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">Your Name</label>
               <input type="text" value={name} onChange={(e) => setName(e.target.value)} required autoFocus placeholder="Full name"
-                className="w-full h-12 px-4 text-[15px] bg-[#0e0e0e] text-[#ddd] border border-[#1a1a1a] rounded-xl focus:outline-none focus:border-[#4ade80]/30 focus:shadow-[0_0_0_3px_rgba(74,222,128,0.06)] placeholder:text-[#2a2a2a] transition-all shadow-inner shadow-black/20" />
+                className="w-full h-12 px-4 text-[15px] bg-[#161b22] text-[#c9d1d9] border border-[#21262d] rounded-lg focus:outline-none focus:border-[#58a6ff] placeholder:text-[#484f58] transition-colors duration-150" />
             </div>
             <div>
               <label className="block text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">Email</label>
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@example.com"
-                className="w-full h-12 px-4 text-[15px] bg-[#0e0e0e] text-[#ddd] border border-[#1a1a1a] rounded-xl focus:outline-none focus:border-[#4ade80]/30 focus:shadow-[0_0_0_3px_rgba(74,222,128,0.06)] placeholder:text-[#2a2a2a] transition-all shadow-inner shadow-black/20" />
+                className="w-full h-12 px-4 text-[15px] bg-[#161b22] text-[#c9d1d9] border border-[#21262d] rounded-lg focus:outline-none focus:border-[#58a6ff] placeholder:text-[#484f58] transition-colors duration-150" />
             </div>
             <div>
               <label className="block text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">Password</label>
               <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="8+ characters"
-                className="w-full h-12 px-4 text-[15px] bg-[#0e0e0e] text-[#ddd] border border-[#1a1a1a] rounded-xl focus:outline-none focus:border-[#4ade80]/30 focus:shadow-[0_0_0_3px_rgba(74,222,128,0.06)] placeholder:text-[#2a2a2a] transition-all shadow-inner shadow-black/20" />
+                className="w-full h-12 px-4 text-[15px] bg-[#161b22] text-[#c9d1d9] border border-[#21262d] rounded-lg focus:outline-none focus:border-[#58a6ff] placeholder:text-[#484f58] transition-colors duration-150" />
             </div>
 
             {error && (
-              <div className="p-3 rounded-xl bg-[#dc2626]/5 border border-[#dc2626]/10">
+              <div className="p-3 rounded-lg bg-[#dc2626]/5 border border-[#dc2626]/10">
                 <p className="text-sm text-[#f87171]">{error}</p>
               </div>
             )}
 
             <button type="submit" disabled={loading}
-              className="w-full h-12 rounded-xl text-[12px] font-bold uppercase tracking-[0.15em] text-white bg-gradient-to-r from-[#238636] via-[#2ea043] to-[#238636] hover:from-[#2ea043] hover:via-[#3fb950] hover:to-[#2ea043] disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shadow-lg shadow-green-900/20 hover:shadow-green-800/30 flex items-center justify-center gap-2">
+              className="w-full h-12 rounded-lg text-[12px] font-bold uppercase tracking-[0.15em] text-white bg-[#238636] hover:bg-[#2ea043] disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150 flex items-center justify-center gap-2">
               {loading && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
               {loading ? "Creating..." : "Get Started"}
             </button>

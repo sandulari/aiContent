@@ -48,36 +48,36 @@ function ResetPasswordForm() {
           <label className="block text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">New Password</label>
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoFocus
             placeholder="8+ characters"
-            className="w-full h-12 px-4 text-[15px] bg-[#0e0e0e] text-[#ddd] border border-[#1a1a1a] rounded-xl focus:outline-none focus:border-[#4ade80]/30 focus:shadow-[0_0_0_3px_rgba(74,222,128,0.06)] placeholder:text-[#2a2a2a] transition-all" />
+            className="w-full h-12 px-4 text-[15px] bg-[#161b22] text-[#c9d1d9] border border-[#21262d] rounded-lg focus:outline-none focus:border-[#58a6ff] placeholder:text-[#484f58] transition-colors duration-150" />
         </div>
         <div>
           <label className="block text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">Confirm Password</label>
           <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required
             placeholder="Re-enter your password"
-            className="w-full h-12 px-4 text-[15px] bg-[#0e0e0e] text-[#ddd] border border-[#1a1a1a] rounded-xl focus:outline-none focus:border-[#4ade80]/30 focus:shadow-[0_0_0_3px_rgba(74,222,128,0.06)] placeholder:text-[#2a2a2a] transition-all" />
+            className="w-full h-12 px-4 text-[15px] bg-[#161b22] text-[#c9d1d9] border border-[#21262d] rounded-lg focus:outline-none focus:border-[#58a6ff] placeholder:text-[#484f58] transition-colors duration-150" />
         </div>
 
         {error && (
-          <div className="p-3 rounded-xl bg-[#dc2626]/5 border border-[#dc2626]/10">
+          <div className="p-3 rounded-lg bg-[#dc2626]/5 border border-[#dc2626]/10">
             <p className="text-sm text-[#f87171]">{error}</p>
           </div>
         )}
 
         {success && (
-          <div className="p-3 rounded-xl bg-[#16a34a]/5 border border-[#16a34a]/10">
+          <div className="p-3 rounded-lg bg-[#16a34a]/5 border border-[#16a34a]/10">
             <p className="text-sm text-[#4ade80]">{success}</p>
           </div>
         )}
 
         {!success ? (
           <button type="submit" disabled={loading}
-            className="w-full h-12 rounded-xl text-[12px] font-bold uppercase tracking-[0.15em] text-white bg-gradient-to-r from-[#16a34a] to-[#22c55e] hover:from-[#15803d] hover:to-[#16a34a] disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-lg shadow-green-900/20 flex items-center justify-center gap-2">
+            className="w-full h-12 rounded-lg text-[12px] font-bold uppercase tracking-[0.15em] text-white bg-[#238636] hover:bg-[#2ea043] disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150 flex items-center justify-center gap-2">
             {loading && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
             {loading ? "Resetting..." : "Reset Password"}
           </button>
         ) : (
           <Link href="/auth/login"
-            className="w-full h-12 rounded-xl text-[12px] font-bold uppercase tracking-[0.15em] text-white bg-gradient-to-r from-[#16a34a] to-[#22c55e] hover:from-[#15803d] hover:to-[#16a34a] transition-all shadow-lg shadow-green-900/20 flex items-center justify-center gap-2">
+            className="w-full h-12 rounded-lg text-[12px] font-bold uppercase tracking-[0.15em] text-white bg-[#238636] hover:bg-[#2ea043] transition-colors duration-150 flex items-center justify-center gap-2">
             Go to Sign In
           </Link>
         )}
@@ -94,12 +94,12 @@ function ResetPasswordForm() {
 
 export default function ResetPasswordPage() {
   return (
-    <div className="min-h-screen bg-[#0a0a0a] flex">
+    <div className="min-h-screen bg-[#0d1117] flex">
       {/* Left — branding */}
       <div className="hidden lg:flex lg:w-[48%] items-center justify-center p-16 relative overflow-hidden">
-        <div className="absolute inset-0 opacity-[0.03]" style={{backgroundImage: "url(\"data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E\")"}} />
+        <div className="absolute inset-0 bg-[#0d1117]" />
         <div className="relative max-w-md">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#16a34a] to-[#4ade80] flex items-center justify-center mb-10 shadow-lg shadow-green-900/30">
+          <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-[#16a34a] to-[#4ade80] flex items-center justify-center mb-10">
             <span className="text-lg font-black text-white">SP</span>
           </div>
           <h1 className="text-[10px] text-[#4ade80] font-bold uppercase tracking-[0.3em] mb-4">Shadow Pages</h1>
