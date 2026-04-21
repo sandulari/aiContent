@@ -3,8 +3,7 @@
 export function Skeleton({ className = "" }: { className?: string }) {
   return (
     <div
-      className={`animate-pulse rounded-lg bg-gradient-to-r from-[#161b22] via-[#1c2129] to-[#161b22] bg-[length:200%_100%] ${className}`}
-      style={{ animationDuration: '1.8s' }}
+      className={`rounded-lg skeleton-shimmer ${className}`}
     />
   );
 }

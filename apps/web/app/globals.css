@@ -100,3 +100,29 @@ input[type="range"]::-moz-range-thumb {
   border: 2px solid #0a0a0a;
   box-shadow: 0 0 0 1px #4ade80, 0 2px 6px rgba(74, 222, 128, 0.35);
 }
+
+/* ── Skeleton shimmer animation ──────────────────────────────
+   Smooth left-to-right sweep like YouTube/Canva loading states.
+   Uses a moving gradient highlight over a dark base. */
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    #161b22 0%,
+    #161b22 35%,
+    #1e252e 50%,
+    #161b22 65%,
+    #161b22 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+}
