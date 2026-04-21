@@ -62,21 +62,80 @@ export function SkeletonTable({ rows = 5 }: { rows?: number }) {
 
 export function SkeletonDashboard() {
   return (
-    <div className="p-8 max-w-5xl mx-auto space-y-6">
-      <Skeleton className="h-7 w-48" />
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[1,2,3,4].map(i => (
-          <div key={i} className="bg-[#161b22] border border-[#21262d] rounded-2xl p-5 space-y-3">
-            <Skeleton className="h-3 w-20" />
-            <Skeleton className="h-8 w-24" />
-            <Skeleton className="h-2.5 w-16" />
+    <div className="min-h-screen bg-[#0d1117]">
+      <div className="p-6 max-w-6xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-7 w-32" />
+            <Skeleton className="h-6 w-20 rounded-md" />
           </div>
-        ))}
-      </div>
-      <div className="bg-[#161b22] border border-[#21262d] rounded-2xl p-6 space-y-4">
-        <Skeleton className="h-5 w-32" />
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[1,2,3].map(i => <SkeletonCard key={i} />)}
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-9 w-36 rounded-lg" />
+            <Skeleton className="h-9 w-32 rounded-lg" />
+            <Skeleton className="h-9 w-9 rounded-lg" />
+          </div>
+        </div>
+
+        {/* Primary stat cards — 4 columns */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="bg-[#161b22] border border-[#21262d] rounded-xl p-5 space-y-3">
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="h-8 w-20" />
+              <Skeleton className="h-3 w-28" />
+            </div>
+          ))}
+        </div>
+
+        {/* Secondary stat cards — 3 columns */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="bg-[#161b22] border border-[#21262d] rounded-xl p-5 space-y-3">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-8 w-16" />
+              <Skeleton className="h-3 w-24" />
+            </div>
+          ))}
+        </div>
+
+        {/* Top Performing Reel */}
+        <div>
+          <Skeleton className="h-4 w-40 mb-3" />
+          <div className="bg-[#161b22] border border-[#21262d] rounded-xl p-5 space-y-3">
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-3 w-1/2" />
+            <div className="flex gap-4">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-3 w-24" />
+            </div>
+          </div>
+        </div>
+
+        {/* Reels Table */}
+        <div>
+          <Skeleton className="h-4 w-36 mb-3" />
+          <div className="bg-[#161b22] border border-[#21262d] rounded-xl overflow-hidden">
+            {/* Table header */}
+            <div className="flex gap-4 px-4 py-2.5 border-b border-[#21262d]">
+              <Skeleton className="h-3 w-32 flex-1" />
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="h-3 w-14" />
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="h-3 w-20" />
+            </div>
+            {/* Table rows */}
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <div key={i} className="flex gap-4 px-4 py-3 items-center border-b border-[#21262d]/50 last:border-0">
+                <Skeleton className="h-3.5 flex-1" style={{ width: `${70 - i * 5}%` }} />
+                <Skeleton className="h-3 w-14" />
+                <Skeleton className="h-3 w-12" />
+                <Skeleton className="h-3 w-12" />
+                <Skeleton className="h-3 w-16" />
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
