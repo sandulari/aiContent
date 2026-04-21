@@ -128,7 +128,7 @@ export function SkeletonDashboard() {
             {/* Table rows */}
             {[1, 2, 3, 4, 5, 6].map((i) => (
               <div key={i} className="flex gap-4 px-4 py-3 items-center border-b border-[#21262d]/50 last:border-0">
-                <Skeleton className="h-3.5 flex-1" style={{ width: `${70 - i * 5}%` }} />
+                <Skeleton className={`h-3.5 ${i === 0 ? "w-full" : i === 1 ? "w-5/6" : i === 2 ? "w-4/5" : i === 3 ? "w-3/4" : i === 4 ? "w-2/3" : "w-3/5"}`} />
                 <Skeleton className="h-3 w-14" />
                 <Skeleton className="h-3 w-12" />
                 <Skeleton className="h-3 w-12" />
