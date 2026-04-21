@@ -247,6 +247,14 @@ async def add_page(
         except Exception as exc:
             logger.warning("Failed to enqueue initial snapshot for @%s: %s", username, exc)
 
+        # Generate recommendations immediately from the existing viral reels pool
+        # so new students see content on Discover from day one.
+        try:
+            from celery_client import trigger_generate_recommendations
+            trigger_generate_recommendations(page.id)
+        except Exception as exc:
+            logger.warning("Failed to enqueue recommendations for @%s: %s", username, exc)
+
         # Explicitly queue re-analysis for every surviving sibling.
         # The API owns this cascade (not the worker's internal fan-out)
         # so it bypasses the cooldown check and triggers reliably.
