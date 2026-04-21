@@ -247,13 +247,37 @@ async def add_page(
         except Exception as exc:
             logger.warning("Failed to enqueue initial snapshot for @%s: %s", username, exc)
 
-        # Generate recommendations immediately from the existing viral reels pool
-        # so new students see content on Discover from day one.
+        # Generate recommendations IN-PROCESS from the existing viral reels pool.
+        # Celery is too slow for new users — they need content on Discover immediately.
         try:
-            from celery_client import trigger_generate_recommendations
-            trigger_generate_recommendations(page.id)
+            from sqlalchemy import text as sa_text
+            # Quick recommendation generation: score all viral reels against this page
+            # and insert the top 500 as recommendations
+            viral_result = await db.execute(
+                sa_text("""
+                    INSERT INTO user_reel_recommendations (id, user_page_id, viral_reel_id, match_score, match_reason, recommended_at)
+                    SELECT gen_random_uuid(), :page_id, vr.id,
+                        CASE WHEN vr.view_count >= 1000000 THEN 0.9
+                             WHEN vr.view_count >= 500000 THEN 0.8
+                             WHEN vr.view_count >= 100000 THEN 0.7
+                             WHEN vr.view_count >= 50000 THEN 0.6
+                             ELSE 0.5 END,
+                        'Viral content — ' || vr.view_count || ' views',
+                        NOW()
+                    FROM viral_reels vr
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM user_reel_recommendations r
+                        WHERE r.user_page_id = :page_id AND r.viral_reel_id = vr.id
+                    )
+                    ORDER BY vr.view_count DESC
+                    LIMIT 500
+                    ON CONFLICT (user_page_id, viral_reel_id) DO NOTHING
+                """),
+                {"page_id": str(page.id)},
+            )
+            logger.info("Generated instant recommendations for @%s", username)
         except Exception as exc:
-            logger.warning("Failed to enqueue recommendations for @%s: %s", username, exc)
+            logger.warning("Failed to generate instant recommendations for @%s: %s", username, exc)
 
         # Explicitly queue re-analysis for every surviving sibling.
         # The API owns this cascade (not the worker's internal fan-out)
