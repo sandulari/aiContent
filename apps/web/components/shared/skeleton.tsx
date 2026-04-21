@@ -206,3 +206,107 @@ export function SkeletonSettings() {
     </div>
   );
 }
+
+export function SkeletonEditor() {
+  return (
+    <div className="flex h-screen bg-[#0d1117]">
+      <div className="w-56 border-r border-[#21262d] p-3 space-y-2">
+        <Skeleton className="h-5 w-20 mb-4" />
+        {[1, 2, 3, 4].map((i) => (
+          <Skeleton key={i} className="h-9 w-full rounded-lg" />
+        ))}
+      </div>
+      <div className="flex-1 flex items-center justify-center">
+        <Skeleton className="w-[360px] h-[640px] rounded-xl" />
+      </div>
+      <div className="w-72 border-l border-[#21262d] p-3 space-y-4">
+        <Skeleton className="h-5 w-24" />
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <div key={i} className="space-y-1.5">
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-8 w-full rounded-lg" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function SkeletonReelDetail() {
+  return (
+    <div className="p-6 max-w-5xl mx-auto space-y-5">
+      <Skeleton className="h-4 w-16" />
+      <div className="bg-[#161b22] border border-[#21262d] rounded-2xl p-6 space-y-4">
+        <div className="flex items-start justify-between">
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-4/5" />
+            <Skeleton className="h-4 w-3/5" />
+          </div>
+          <Skeleton className="h-6 w-20 rounded-full" />
+        </div>
+        <div className="flex gap-4">
+          <Skeleton className="h-3 w-20" />
+          <Skeleton className="h-3 w-20" />
+          <Skeleton className="h-3 w-24" />
+        </div>
+      </div>
+      <div className="bg-[#161b22] border border-[#21262d] rounded-2xl p-6 space-y-3">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-3 w-64" />
+        <div className="flex items-center gap-3 bg-[#0d1117] rounded-lg p-3">
+          <Skeleton className="w-32 h-20 rounded-md" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-4 w-48" />
+            <Skeleton className="h-3 w-24" />
+          </div>
+          <Skeleton className="h-8 w-24 rounded-lg" />
+        </div>
+      </div>
+      <div className="space-y-3">
+        <Skeleton className="h-4 w-32" />
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="flex items-center gap-3 bg-[#161b22] border border-[#21262d] rounded-lg p-3">
+            <Skeleton className="w-20 h-14 rounded" />
+            <div className="flex-1 space-y-1.5">
+              <Skeleton className="h-3.5 w-48" />
+              <Skeleton className="h-2.5 w-20" />
+            </div>
+            <Skeleton className="h-7 w-16 rounded-lg" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function SkeletonExports() {
+  return (
+    <div className="p-8 max-w-5xl mx-auto space-y-6">
+      <div>
+        <Skeleton className="h-7 w-36" />
+        <Skeleton className="h-3.5 w-52 mt-2" />
+      </div>
+      <SkeletonTable rows={6} />
+    </div>
+  );
+}
+
+export function SkeletonLibrary() {
+  return (
+    <div className="p-8 max-w-5xl mx-auto space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <Skeleton className="h-7 w-32" />
+          <Skeleton className="h-3.5 w-48 mt-2" />
+        </div>
+        <Skeleton className="h-9 w-32 rounded-lg" />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <SkeletonCard key={i} />
+        ))}
+      </div>
+    </div>
+  );
+}

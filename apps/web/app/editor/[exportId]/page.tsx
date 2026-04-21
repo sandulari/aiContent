@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Loading } from "@/components/shared/loading";
+import { SkeletonEditor } from "@/components/shared/skeleton";
 import { api, UserExport, Template } from "@/lib/api";
 import { Canvas } from "@/components/editor/Canvas";
 import { LayersPanel } from "@/components/editor/LayersPanel";
@@ -359,7 +360,7 @@ export default function EditorPage() {
     router.back();
   };
 
-  if (loading) return <div className="flex items-center justify-center h-screen bg-[#0d1117]"><Loading size="lg" /></div>;
+  if (loading) return <SkeletonEditor />;
 
   const selectedLayer = selectedLayerId ? { id: selectedLayerId, type: selectedLayerId, props: getLayerProps(selectedLayerId) } : null;
 

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHead, TableBody, TableRow, TableCell, TableHeaderCell } from "@/components/ui/table";
 import { Loading } from "@/components/shared/loading";
-import { SkeletonTable } from "@/components/shared/skeleton";
+import { SkeletonExports } from "@/components/shared/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { api, UserExport } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
@@ -29,7 +29,7 @@ export default function ExportsPage() {
   }, []);
   usePolling(fetch, 10000, true);
 
-  if (loading) return <div className="p-8 max-w-5xl mx-auto"><SkeletonTable rows={5} /></div>;
+  if (loading) return <SkeletonExports />;
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
