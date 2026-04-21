@@ -177,10 +177,17 @@ _IMG_PROXY_HEADERS = {
 }
 
 
+_PLACEHOLDER_SVG = b'''<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
+<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0d1117"/><stop offset="100%" stop-color="#161b22"/></linearGradient></defs>
+<rect width="320" height="180" fill="url(#g)"/>
+<text x="160" y="85" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" fill="#30363d">No preview</text>
+<text x="160" y="102" text-anchor="middle" font-family="system-ui,sans-serif" font-size="9" fill="#21262d">available</text>
+</svg>'''
+
 def _placeholder_response():
     return StreamingResponse(
-        iter([_PLACEHOLDER_PNG]),
-        media_type="image/png",
+        iter([_PLACEHOLDER_SVG]),
+        media_type="image/svg+xml",
         headers=_IMG_PROXY_HEADERS,
     )
 
@@ -225,11 +232,29 @@ async def proxy_thumbnail(reel_id: UUID, db: AsyncSession = Depends(get_db)):
     if resp.status_code != 200:
         return _placeholder_response()
 
+    # Detect Instagram's red/broken placeholder images:
+    # - Too small (under 5KB = probably a tiny red square)
+    # - Predominantly red pixels (Instagram's expired content placeholder)
+    content = resp.content
+    if len(content) < 5000:
+        return _placeholder_response()
+
+    # Check for red-dominant images by sampling first bytes of JPEG
+    # Instagram's red placeholder has very high red channel values
+    # A simple heuristic: if the image is small AND the content contains
+    # repeated 0xFF bytes near the start, it's likely the red placeholder
+    if len(content) < 15000:
+        # Count red-ish bytes in a sample of the image data
+        sample = content[200:min(1000, len(content))]
+        red_bytes = sum(1 for b in sample if b > 200)
+        if red_bytes > len(sample) * 0.3:
+            return _placeholder_response()
+
     ct = resp.headers.get("content-type", "image/jpeg")
     if not ct.startswith("image/"):
         ct = "image/jpeg"
     return StreamingResponse(
-        iter([resp.content]),
+        iter([content]),
         media_type=ct,
         headers=_IMG_PROXY_HEADERS,
     )
