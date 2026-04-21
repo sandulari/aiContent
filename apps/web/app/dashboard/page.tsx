@@ -733,7 +733,6 @@ export default function DashboardPage() {
           <SkeletonDashboard />
         ) : (
           <div className={`transition-opacity duration-300 ${dashLoading ? "opacity-50 pointer-events-none" : "opacity-100"}`}>
-          <>
             {/* Primary stat cards row */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
               <div className="bg-[#161b22] border border-[#21262d] rounded-xl p-5">
