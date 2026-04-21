@@ -166,28 +166,44 @@ export default function DiscoverPage() {
             </select>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={minViews}
-            onChange={(e) => setMinViews(Number(e.target.value))}
-            className="h-9 px-3 text-sm bg-[#161b22] text-[#e6edf3] border border-[#21262d] rounded-lg"
-          >
-            <option value={0}>All views</option>
-            <option value={10000}>10K+ views</option>
-            <option value={50000}>50K+ views</option>
-            <option value={100000}>100K+ views</option>
-            <option value={500000}>500K+ views</option>
-            <option value={1000000}>1M+ views</option>
-          </select>
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as SortBy)}
-            className="h-9 px-3 text-sm bg-[#161b22] text-[#e6edf3] border border-[#21262d] rounded-lg"
-          >
-            <option value="score">Best match</option>
-            <option value="views">Most views</option>
-            <option value="recent">Most recent</option>
-          </select>
+        <div className="flex items-center gap-1.5 bg-[#161b22] border border-[#21262d] rounded-lg p-1">
+          {[
+            { value: 0, label: "All" },
+            { value: 10000, label: "10K+" },
+            { value: 100000, label: "100K+" },
+            { value: 500000, label: "500K+" },
+            { value: 1000000, label: "1M+" },
+          ].map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setMinViews(opt.value)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors duration-150 ${
+                minViews === opt.value
+                  ? "bg-[#21262d] text-[#e6edf3]"
+                  : "text-[#7d8590] hover:text-[#e6edf3]"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+          <div className="w-px h-5 bg-[#21262d] mx-1" />
+          {[
+            { value: "score" as SortBy, label: "Best match" },
+            { value: "views" as SortBy, label: "Most views" },
+            { value: "recent" as SortBy, label: "Recent" },
+          ].map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setSortBy(opt.value)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors duration-150 ${
+                sortBy === opt.value
+                  ? "bg-[#21262d] text-[#e6edf3]"
+                  : "text-[#7d8590] hover:text-[#e6edf3]"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
       </div>
 
