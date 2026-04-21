@@ -19,11 +19,11 @@ export function Sidebar() {
   const router = useRouter();
 
   return (
-    <aside className="w-[220px] min-w-[220px] h-screen bg-[#0a0a0a] border-r border-[#151515] flex flex-col">
+    <aside className="w-[220px] min-w-[220px] h-screen bg-[#010409]/95 backdrop-blur-xl border-r border-[#1b2028] flex flex-col">
       {/* Brand */}
-      <div className="px-5 py-6 border-b border-[#151515]">
+      <div className="px-5 py-6 border-b border-[#1b2028]">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#16a34a] to-[#4ade80] flex items-center justify-center shadow-lg shadow-green-900/20">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#16a34a] to-[#4ade80] flex items-center justify-center shadow-lg shadow-green-900/20 ring-1 ring-green-400/20">
             <span className="text-xs font-black text-white">SP</span>
           </div>
           <div>
@@ -52,7 +52,7 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="px-3 py-4 border-t border-[#151515]">
+      <div className="px-3 py-4 border-t border-[#1b2028]">
         <button onClick={async () => { try { await api.auth.logout(); } catch {} router.push("/auth/login"); }}
           className="flex items-center gap-2.5 px-3 py-2 text-[12px] font-medium text-[#333] hover:text-[#f87171] rounded-xl transition-colors w-full tracking-wide">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

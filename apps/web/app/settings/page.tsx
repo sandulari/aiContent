@@ -185,8 +185,9 @@ export default function SettingsPage() {
         </h2>
         <Card>
           <div className="space-y-4">
-            <div>
-              <div className="flex items-center gap-2 mb-2">
+            <div className="p-4 rounded-xl border border-[#1b2028] bg-gradient-to-r from-[#0d1117] to-[#0d1117] relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-[#2B54E1]/5 via-transparent to-[#2B54E1]/5 pointer-events-none" />
+              <div className="relative flex items-center gap-2 mb-2">
                 <div className="w-6 h-6 rounded bg-[#2B54E1] flex items-center justify-center">
                   <span className="text-[8px] font-bold text-white">MC</span>
                 </div>
@@ -197,10 +198,10 @@ export default function SettingsPage() {
                   <span className="text-[10px] text-[#484f58] bg-[#21262d] px-1.5 py-0.5 rounded">Not connected</span>
                 )}
               </div>
-              <p className="text-[11px] text-[#484f58] mb-3">
+              <p className="relative text-[11px] text-[#484f58] mb-3">
                 Connect your ManyChat account to track new leads and subscribers on your dashboard.
               </p>
-              <div className="flex gap-2">
+              <div className="relative flex gap-2">
                 <input
                   type="password"
                   placeholder="ManyChat API Key"

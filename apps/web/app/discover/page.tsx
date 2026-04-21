@@ -225,7 +225,7 @@ export default function DiscoverPage() {
           {recs.map((rec) => (
             <div
               key={rec.id}
-              className="bg-[#161b22] border border-[#21262d] rounded-xl overflow-hidden hover:border-[#30363d] transition-all group"
+              className="bg-[#0d1117]/80 backdrop-blur-sm border border-[#1b2028] rounded-xl overflow-hidden transition-all group card-glow"
             >
               <div className="relative aspect-video bg-[#0d1117] overflow-hidden">
                 {/* Thumbnail proxied through our API (fetches from Instagram server-side, no CORS issues) */}
@@ -236,7 +236,7 @@ export default function DiscoverPage() {
                   loading="lazy"
                 />
                 <div className="absolute top-2 left-2 flex gap-1.5">
-                  <span className="bg-black/75 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">
+                  <span className="bg-black/60 backdrop-blur-sm text-white text-[10px] font-medium px-1.5 py-0.5 rounded">
                     {formatViews(rec.view_count)} views
                   </span>
                   {rec.duration_seconds && (
@@ -246,7 +246,7 @@ export default function DiscoverPage() {
                   )}
                 </div>
                 <div className="absolute top-2 right-2">
-                  <span className="bg-[#0f2e16]/90 text-[#3fb950] text-[10px] font-semibold px-1.5 py-0.5 rounded">
+                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${Math.round(rec.match_score * 100) > 70 ? "bg-[#d4a843]/20 text-[#d4a843]" : "bg-[#0f2e16]/90 text-[#3fb950]"}`}>
                     {Math.round(rec.match_score * 100)}%
                   </span>
                 </div>

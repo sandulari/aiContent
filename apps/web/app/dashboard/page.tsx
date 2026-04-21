@@ -359,13 +359,13 @@ function StatCard({
   const isZero = delta === 0 || delta == null;
 
   return (
-    <div className="bg-[#161b22] border border-[#21262d] rounded-xl p-5">
+    <div className="bg-[#0d1117]/80 backdrop-blur-sm border border-[#1b2028] rounded-xl p-5 card-glow">
       <p className="text-[11px] text-[#7d8590] uppercase tracking-wider mb-2">{label}</p>
-      <p className="text-2xl font-bold text-[#e6edf3] tabular-nums">
+      <p className="text-2xl font-bold text-[#e6edf3] tabular-nums tracking-tight">
         {format === "percent" ? `${(value ?? 0).toFixed(1)}%` : formatNumber(value)}
       </p>
       {!isZero && (
-        <div className={`flex items-center gap-1 mt-1.5 text-xs ${isPositive ? "text-[#3fb950]" : "text-[#f85149]"}`}>
+        <div className={`inline-flex items-center gap-1 mt-1.5 text-xs px-2 py-0.5 rounded-full ${isPositive ? "text-[#3fb950] bg-[#3fb950]/10" : "text-[#f85149] bg-[#f85149]/10"}`}>
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path
               strokeLinecap="round"
@@ -440,8 +440,8 @@ function ReelsTable({ reels }: { reels: NonNullable<DashboardData["reels"]> }) {
         Reels in This Period
         <span className="ml-2 text-[#484f58] font-normal">({reels.length})</span>
       </h2>
-      <div className="bg-[#161b22] border border-[#21262d] rounded-xl overflow-hidden">
-        <div className="grid grid-cols-[1fr_80px_80px_80px_100px] gap-2 px-4 py-2.5 border-b border-[#21262d] text-[10px] text-[#484f58] uppercase tracking-wider font-medium">
+      <div className="bg-[#0d1117]/80 backdrop-blur-sm border border-[#1b2028] rounded-xl overflow-hidden">
+        <div className="grid grid-cols-[1fr_80px_80px_80px_100px] gap-2 px-4 py-2.5 border-b border-[#1b2028] text-[10px] text-[#484f58] uppercase tracking-wider font-medium">
           <span>Caption</span>
           <ColHeader label="Views" sortKey="views" />
           <ColHeader label="Likes" sortKey="likes" />
@@ -721,7 +721,7 @@ export default function DashboardPage() {
 
         {/* No data banner */}
         {showNoDataBanner && (
-          <div className="mb-6 p-4 bg-[#161b22] border border-[#21262d] rounded-xl">
+          <div className="mb-6 p-4 bg-[#0d1117]/80 backdrop-blur-sm border border-[#1b2028] rounded-xl">
             <p className="text-sm text-[#7d8590]">
               Connect your Instagram page and post your first reel to start tracking growth.
             </p>
@@ -735,9 +735,9 @@ export default function DashboardPage() {
           <div className={`transition-opacity duration-300 ${dashLoading ? "opacity-50 pointer-events-none" : "opacity-100"}`}>
             {/* Primary stat cards row */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-              <div className="bg-[#161b22] border border-[#21262d] rounded-xl p-5">
+              <div className="bg-[#0d1117]/80 backdrop-blur-sm border border-[#1b2028] rounded-xl p-5 card-glow">
                 <p className="text-[11px] text-[#7d8590] uppercase tracking-wider mb-2">New Followers</p>
-                <p className="text-2xl font-bold text-[#e6edf3] tabular-nums">
+                <p className="text-2xl font-bold text-[#e6edf3] tabular-nums tracking-tight">
                   {d?.followers_delta != null ? (d.followers_delta >= 0 ? `+${formatNumber(d.followers_delta)}` : formatNumber(d.followers_delta)) : "—"}
                 </p>
                 <p className="text-[11px] text-[#484f58] mt-1.5">Total: {formatNumber(d?.followers ?? 0)}</p>
@@ -775,9 +775,9 @@ export default function DashboardPage() {
                 delta={d?.engagement_delta ?? null}
                 format="percent"
               />
-              <div className="bg-[#161b22] border border-[#21262d] rounded-xl p-5">
+              <div className="bg-[#0d1117]/80 backdrop-blur-sm border border-[#1b2028] rounded-xl p-5 card-glow">
                 <p className="text-[11px] text-[#7d8590] uppercase tracking-wider mb-2">New Leads</p>
-                <p className="text-2xl font-bold text-[#e6edf3] tabular-nums">—</p>
+                <p className="text-2xl font-bold text-[#e6edf3] tabular-nums tracking-tight">—</p>
                 <p className="text-[11px] text-[#484f58] mt-1.5">Connect ManyChat in Settings</p>
               </div>
             </div>
@@ -786,7 +786,7 @@ export default function DashboardPage() {
             {d?.top_reel && (
               <div className="mb-8">
                 <h2 className="text-sm font-medium text-[#e6edf3] mb-3">Top Performing Reel</h2>
-                <div className="bg-[#161b22] border border-[#21262d] rounded-xl p-5">
+                <div className="bg-[#0d1117]/80 backdrop-blur-sm border border-[#1b2028] rounded-xl p-5 card-glow">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-[#e6edf3] line-clamp-2 mb-3">
@@ -839,7 +839,7 @@ export default function DashboardPage() {
                   {exports.map((exp) => (
                     <div
                       key={exp.id}
-                      className="bg-[#161b22] border border-[#21262d] rounded-xl p-4 flex items-center justify-between"
+                      className="bg-[#0d1117]/80 backdrop-blur-sm border border-[#1b2028] rounded-xl p-4 flex items-center justify-between card-glow"
                     >
                       <div className="min-w-0 flex-1">
                         <p className="text-sm text-[#e6edf3] font-medium truncate">{exp.headline_text}</p>
