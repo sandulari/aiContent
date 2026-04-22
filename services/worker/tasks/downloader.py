@@ -179,6 +179,53 @@ def download_video_task(self, reel_id: str, source_id: str):
         }
 
     except Exception as exc:
+        # Before retrying via Celery, try Playwright as last resort
+        if "bot" in str(exc).lower() or "Sign in" in str(exc):
+            logger.warning("yt-dlp bot-blocked for %s, trying Playwright browser fallback", video_id)
+            try:
+                from lib.playwright_dl import download_via_playwright
+                pw_result = download_via_playwright(source_url, video_id)
+                if pw_result and pw_result.get("file_path"):
+                    from lib.ytdlp import DownloadResult
+                    result = DownloadResult(
+                        file_path=pw_result["file_path"],
+                        info_json_path="",
+                        resolution="",
+                        fps=0,
+                        codec="",
+                        bitrate=0,
+                        duration=pw_result.get("duration", 0),
+                        file_size=pw_result.get("file_size", os.path.getsize(pw_result["file_path"])),
+                    )
+                    # Upload to MinIO
+                    minio_key = f"{video_id}/{os.path.basename(result.file_path)}"
+                    upload_file(result.file_path, VIDEOS_BUCKET, minio_key)
+
+                    file_id = str(uuid.uuid4())
+                    with get_session() as session:
+                        session.execute(
+                            text("""
+                                INSERT INTO video_files (id, viral_reel_id, file_type, minio_bucket, minio_key,
+                                    resolution, duration_seconds, file_size_bytes, created_at)
+                                VALUES (:id, :video_id, 'raw_download', :bucket, :key, :res, :dur, :size, :now)
+                            """),
+                            {"id": file_id, "video_id": video_id, "bucket": VIDEOS_BUCKET,
+                             "key": minio_key, "res": "", "dur": result.duration,
+                             "size": result.file_size, "now": datetime.now(timezone.utc)},
+                        )
+                        session.execute(
+                            text("UPDATE viral_reels SET status = 'downloaded', updated_at = :now WHERE id = :id"),
+                            {"id": video_id, "now": datetime.now(timezone.utc)},
+                        )
+                        session.execute(
+                            text("UPDATE jobs SET status = 'success', finished_at = :now, attempts = attempts + 1 WHERE id = :id"),
+                            {"id": job_id, "now": datetime.now(timezone.utc)},
+                        )
+                    logger.info("Playwright download SUCCESS for %s (%d bytes)", video_id, result.file_size)
+                    return {"video_id": video_id, "file_size": result.file_size, "method": "playwright"}
+            except Exception as pw_exc:
+                logger.error("Playwright fallback also failed for %s: %s", video_id, pw_exc)
+
         logger.error("Download failed for video=%s: %s", video_id, exc, exc_info=True)
 
         with get_session() as session:
