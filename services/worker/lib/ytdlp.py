@@ -53,6 +53,7 @@ def download_video(url: str, video_id: str) -> DownloadResult:
         "--no-overwrites",
         "--no-check-certificates",
         "--max-filesize", "500M",
+        "--extractor-args", "youtube:player_client=android",
         "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         url,
     ]

@@ -247,37 +247,75 @@ async def add_page(
         except Exception as exc:
             logger.warning("Failed to enqueue initial snapshot for @%s: %s", username, exc)
 
-        # Generate recommendations IN-PROCESS from the existing viral reels pool.
-        # Celery is too slow for new users — they need content on Discover immediately.
+        # Generate niche-filtered recommendations IN-PROCESS from existing viral reels.
+        # Only recommends reels from the SAME niche as the user's page.
         try:
             from sqlalchemy import text as sa_text
-            # Quick recommendation generation: score all viral reels against this page
-            # and insert the top 500 as recommendations
-            viral_result = await db.execute(
+
+            # Get the page's niche from the profile (just created by analyze_page)
+            # or from the page's detected niche
+            niche_result = await db.execute(
                 sa_text("""
-                    INSERT INTO user_reel_recommendations (id, user_page_id, viral_reel_id, match_score, match_reason, recommended_at)
-                    SELECT gen_random_uuid(), :page_id, vr.id,
-                        CASE WHEN vr.view_count >= 1000000 THEN 0.9
-                             WHEN vr.view_count >= 500000 THEN 0.8
-                             WHEN vr.view_count >= 100000 THEN 0.7
-                             WHEN vr.view_count >= 50000 THEN 0.6
-                             ELSE 0.5 END,
-                        'Viral content — ' || vr.view_count || ' views',
-                        NOW()
-                    FROM viral_reels vr
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM user_reel_recommendations r
-                        WHERE r.user_page_id = :page_id AND r.viral_reel_id = vr.id
-                    )
-                    ORDER BY vr.view_count DESC
-                    LIMIT 500
-                    ON CONFLICT (user_page_id, viral_reel_id) DO NOTHING
+                    SELECT n.id FROM niches n
+                    JOIN page_profiles pp ON pp.niche_primary = n.name OR pp.niche_primary = n.slug
+                    WHERE pp.user_page_id = :page_id
+                    ORDER BY pp.analyzed_at DESC LIMIT 1
                 """),
                 {"page_id": str(page.id)},
             )
-            logger.info("Generated instant recommendations for @%s", username)
+            niche_id = niche_result.scalar()
+
+            if niche_id:
+                # Niche-filtered recommendations — only same niche
+                await db.execute(
+                    sa_text("""
+                        INSERT INTO user_reel_recommendations (id, user_page_id, viral_reel_id, match_score, match_reason, recommended_at)
+                        SELECT gen_random_uuid(), :page_id, vr.id,
+                            CASE WHEN vr.view_count >= 1000000 THEN 0.9
+                                 WHEN vr.view_count >= 500000 THEN 0.8
+                                 WHEN vr.view_count >= 100000 THEN 0.7
+                                 WHEN vr.view_count >= 50000 THEN 0.6
+                                 ELSE 0.5 END,
+                            'Viral in your niche — ' || vr.view_count || ' views',
+                            NOW()
+                        FROM viral_reels vr
+                        WHERE vr.niche_id = :niche_id
+                        AND NOT EXISTS (
+                            SELECT 1 FROM user_reel_recommendations r
+                            WHERE r.user_page_id = :page_id AND r.viral_reel_id = vr.id
+                        )
+                        ORDER BY vr.view_count DESC
+                        LIMIT 500
+                        ON CONFLICT (user_page_id, viral_reel_id) DO NOTHING
+                    """),
+                    {"page_id": str(page.id), "niche_id": str(niche_id)},
+                )
+            else:
+                # No niche detected yet — fall back to all reels but from business theme pages only
+                await db.execute(
+                    sa_text("""
+                        INSERT INTO user_reel_recommendations (id, user_page_id, viral_reel_id, match_score, match_reason, recommended_at)
+                        SELECT gen_random_uuid(), :page_id, vr.id,
+                            CASE WHEN vr.view_count >= 1000000 THEN 0.9
+                                 WHEN vr.view_count >= 500000 THEN 0.8
+                                 WHEN vr.view_count >= 100000 THEN 0.7
+                                 ELSE 0.5 END,
+                            'Viral content — ' || vr.view_count || ' views',
+                            NOW()
+                        FROM viral_reels vr
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM user_reel_recommendations r
+                            WHERE r.user_page_id = :page_id AND r.viral_reel_id = vr.id
+                        )
+                        ORDER BY vr.view_count DESC
+                        LIMIT 500
+                        ON CONFLICT (user_page_id, viral_reel_id) DO NOTHING
+                    """),
+                    {"page_id": str(page.id)},
+                )
+            logger.info("Generated niche-filtered recommendations for @%s (niche_id=%s)", username, niche_id)
         except Exception as exc:
-            logger.warning("Failed to generate instant recommendations for @%s: %s", username, exc)
+            logger.warning("Failed to generate recommendations for @%s: %s", username, exc)
 
         # Explicitly queue re-analysis for every surviving sibling.
         # The API owns this cascade (not the worker's internal fan-out)
