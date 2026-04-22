@@ -52,9 +52,51 @@ async def get_reel(reel_id: UUID, current_user: User = Depends(get_current_user)
     page_result = await db.execute(select(ThemePage.username).where(ThemePage.id == reel.theme_page_id))
     source_page = page_result.scalar_one_or_none()
 
-    # Find similar reels from the same niche (not YouTube search results)
+    # Find similar reels by CAPTION CONTENT — not just same niche
+    # Uses PostgreSQL full-text search to match reels with similar words
     similar_reels = []
-    if reel.niche_id:
+    if reel.caption and len(reel.caption) > 20:
+        from sqlalchemy import text as sa_text
+        # Extract key words from the caption for matching
+        import re
+        stop = {"the","a","an","is","are","was","were","in","on","at","to","for","of","and",
+                "or","but","not","with","this","that","it","be","have","has","do","will","can",
+                "i","you","we","they","he","she","my","your","our","follow","like","share",
+                "comment","dm","link","bio","repost","tag","save","click","read","caption"}
+        words = [w.lower() for w in re.findall(r'\w+', reel.caption) if len(w) > 3 and w.lower() not in stop]
+        search_words = ' | '.join(words[:8])  # Top 8 meaningful words
+
+        if search_words:
+            sim_result = await db.execute(
+                sa_text("""
+                    SELECT vr.id, vr.ig_video_id, vr.ig_url, vr.caption, vr.view_count,
+                           vr.like_count, vr.posted_at, tp.username as source_page,
+                           ts_rank(to_tsvector('english', COALESCE(vr.caption, '')),
+                                   to_tsquery('english', :search)) as relevance
+                    FROM viral_reels vr
+                    LEFT JOIN theme_pages tp ON tp.id = vr.theme_page_id
+                    WHERE vr.id != :reel_id
+                      AND vr.view_count > 5000
+                      AND to_tsvector('english', COALESCE(vr.caption, '')) @@ to_tsquery('english', :search)
+                    ORDER BY relevance DESC, vr.view_count DESC
+                    LIMIT 8
+                """),
+                {"reel_id": str(reel.id), "search": search_words},
+            )
+            for sr in sim_result.fetchall():
+                similar_reels.append({
+                    "id": str(sr.id),
+                    "ig_video_id": sr.ig_video_id,
+                    "ig_url": sr.ig_url,
+                    "caption": (sr.caption or "")[:120],
+                    "view_count": sr.view_count,
+                    "like_count": sr.like_count,
+                    "source_page": sr.source_page,
+                    "posted_at": str(sr.posted_at) if sr.posted_at else None,
+                })
+
+    # Fallback: if text search found nothing, get same-niche top reels
+    if not similar_reels and reel.niche_id:
         from sqlalchemy import text as sa_text
         sim_result = await db.execute(
             sa_text("""
@@ -62,23 +104,16 @@ async def get_reel(reel_id: UUID, current_user: User = Depends(get_current_user)
                        vr.like_count, vr.posted_at, tp.username as source_page
                 FROM viral_reels vr
                 LEFT JOIN theme_pages tp ON tp.id = vr.theme_page_id
-                WHERE vr.niche_id = :niche_id
-                  AND vr.id != :reel_id
-                  AND vr.view_count > 10000
-                ORDER BY vr.view_count DESC
-                LIMIT 8
+                WHERE vr.niche_id = :niche_id AND vr.id != :reel_id AND vr.view_count > 50000
+                ORDER BY vr.view_count DESC LIMIT 8
             """),
             {"niche_id": str(reel.niche_id), "reel_id": str(reel.id)},
         )
         for sr in sim_result.fetchall():
             similar_reels.append({
-                "id": str(sr.id),
-                "ig_video_id": sr.ig_video_id,
-                "ig_url": sr.ig_url,
-                "caption": (sr.caption or "")[:120],
-                "view_count": sr.view_count,
-                "like_count": sr.like_count,
-                "source_page": sr.source_page,
+                "id": str(sr.id), "ig_video_id": sr.ig_video_id, "ig_url": sr.ig_url,
+                "caption": (sr.caption or "")[:120], "view_count": sr.view_count,
+                "like_count": sr.like_count, "source_page": sr.source_page,
                 "posted_at": str(sr.posted_at) if sr.posted_at else None,
             })
 
