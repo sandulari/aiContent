@@ -16,6 +16,7 @@ from models.ai_text_generation import AITextGeneration
 from models.discovery_run import DiscoveryRun
 from models.job import Job
 from models.user_page_reel import UserPageReel
+from models.reel_profile import ReelProfile
 
 __all__ = [
     "Base", "UUIDMixin",
@@ -25,5 +26,5 @@ __all__ = [
     "VideoSource", "VideoFile",
     "UserTemplate", "UserExport",
     "AITextGeneration", "DiscoveryRun", "Job",
-    "UserPageReel",
+    "UserPageReel", "ReelProfile",
 ]

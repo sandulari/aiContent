@@ -279,6 +279,17 @@ export const api = {
         body: JSON.stringify({ api_key: apiKey }),
       });
     },
+    setNicheTags(pageId: string, tags: string[]) {
+      return req<{ status: string }>(`/api/my-pages/${pageId}/niche-tags`, {
+        method: "PUT",
+        body: JSON.stringify({ tags }),
+      });
+    },
+    triggerDiscovery(pageId: string) {
+      return req<{ status: string; task_id: string }>(`/api/my-pages/${pageId}/discover`, {
+        method: "POST",
+      });
+    },
   },
 
   recommendations: {

@@ -32,6 +32,10 @@ class AddPageRequest(BaseModel):
     page_type: PageType = Field(default="own")
 
 
+class NicheTagsRequest(BaseModel):
+    tags: List[str] = Field(..., min_length=1, max_length=10)
+
+
 class PageResponse(BaseModel):
     id: str
     ig_username: str
@@ -1075,3 +1079,52 @@ async def refresh_stats_now(
         "followers": page.follower_count,
         "reels_updated": reels_count,
     }
+
+
+@router.put("/{page_id}/niche-tags")
+async def set_niche_tags(
+    page_id: UUID,
+    body: NicheTagsRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set the user-selected niche tags for a page (onboarding step)."""
+    result = await db.execute(
+        select(UserPage).where(
+            UserPage.id == page_id, UserPage.user_id == current_user.id
+        )
+    )
+    page = result.scalar_one_or_none()
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+
+    page.niche_tags = body.tags
+    await db.commit()
+    return {"status": "ok", "tags": body.tags}
+
+
+@router.post("/{page_id}/discover", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_discovery(
+    page_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Trigger the deep discovery pipeline for a user's page.
+
+    Called after onboarding completes (niche tags + reference pages set).
+    Kicks off: seed expansion → second-degree scan → reel scraping →
+    Claude profiling → enhanced recommendations.
+    """
+    result = await db.execute(
+        select(UserPage).where(
+            UserPage.id == page_id, UserPage.user_id == current_user.id,
+            UserPage.page_type == "own",
+        )
+    )
+    page = result.scalar_one_or_none()
+    if not page:
+        raise HTTPException(status_code=404, detail="Own page not found")
+
+    from celery_client import trigger_deep_discovery
+    task_id = trigger_deep_discovery(page.id)
+    return {"status": "discovering", "task_id": task_id, "page_id": str(page.id)}

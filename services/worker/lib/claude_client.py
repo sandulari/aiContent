@@ -217,6 +217,158 @@ Rules:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# 1b. Per-reel content profiling
+# ══════════════════════════════════════════════════════════════════════
+
+_REEL_PROFILE_SYSTEM = (
+    "You are an Instagram content analyst. You profile individual reels "
+    "by their caption, metadata, and context. You always return valid JSON "
+    "and nothing else — no prose, no code fences."
+)
+
+
+def profile_reel(
+    caption: str,
+    view_count: int,
+    like_count: int,
+    duration_seconds: float | None,
+    source_username: str,
+    source_niche: str | None = None,
+) -> Optional[Dict[str, Any]]:
+    """Analyze a single reel and return a structured content profile.
+
+    Returns a dict with topic, format, hook_pattern, visual_style,
+    audio_type, content_summary, niche_tags, or None on failure.
+    """
+    if not is_enabled():
+        return None
+    if not caption or len(caption) < 10:
+        return None
+
+    user_prompt = f"""Profile this Instagram reel for content matching.
+
+Caption: {caption[:400]}
+Views: {view_count:,}
+Likes: {like_count:,}
+Duration: {duration_seconds or 'unknown'}s
+Source page: @{source_username} (niche: {source_niche or 'unknown'})
+
+Respond with exactly this JSON:
+{{
+  "topic": "specific topic (e.g. 'startup fundraising', 'morning routine', 'protein meals')",
+  "format": "one of: educational | entertainment | inspirational | tutorial | storytelling | behind-the-scenes | before-after | listicle | reaction | trend",
+  "hook_pattern": "one of: question | bold-claim | statistic | controversy | curiosity-gap | direct-address | shock-value | relatable-struggle",
+  "visual_style": "one of: talking-head | b-roll | text-overlay | split-screen | transitions | cinematic | screen-recording | lifestyle",
+  "audio_type": "one of: voiceover | trending-audio | original-music | speech | no-audio | sound-effects",
+  "content_summary": "one sentence describing what this reel is about",
+  "niche_tags": ["tag1", "tag2", "tag3"]
+}}
+
+Rules:
+- niche_tags: 3-6 specific tags that describe the content (not generic)
+- content_summary: max 100 chars
+- No markdown, no code fences. JSON only."""
+
+    raw = _call_claude(
+        system=_REEL_PROFILE_SYSTEM,
+        user_prompt=user_prompt,
+        max_tokens=500,
+        temperature=0.1,
+    )
+    if not raw:
+        return None
+    parsed = _extract_json(raw)
+    if not isinstance(parsed, dict):
+        return None
+    parsed.setdefault("topic", "general")
+    parsed.setdefault("format", "entertainment")
+    parsed.setdefault("hook_pattern", "direct-address")
+    parsed.setdefault("visual_style", "talking-head")
+    parsed.setdefault("audio_type", "voiceover")
+    parsed.setdefault("content_summary", "")
+    parsed.setdefault("niche_tags", [])
+    if not isinstance(parsed.get("niche_tags"), list):
+        parsed["niche_tags"] = []
+    return parsed
+
+
+def profile_reels_batch(
+    reels: List[Dict[str, Any]],
+    batch_size: int = 8,
+) -> Dict[str, Dict[str, Any]]:
+    """Profile multiple reels efficiently by batching them into single Claude calls.
+
+    Returns a dict mapping reel_id -> profile dict.
+    """
+    if not is_enabled() or not reels:
+        return {}
+
+    results: Dict[str, Dict[str, Any]] = {}
+
+    for start in range(0, len(reels), batch_size):
+        batch = reels[start : start + batch_size]
+        if not batch:
+            break
+
+        reels_text = ""
+        for r in batch:
+            cap = (r.get("caption") or "")[:200].replace("\n", " ")
+            reels_text += (
+                f'id="{r["id"]}" views={r.get("view_count", 0)} '
+                f'likes={r.get("like_count", 0)} '
+                f'page="@{r.get("source_username", "?")}" '
+                f'caption="{cap}"\n'
+            )
+
+        user_prompt = f"""Profile these {len(batch)} Instagram reels for content matching.
+
+Reels:
+{reels_text}
+
+For EACH reel, return a JSON object with:
+- topic (specific, e.g. "startup fundraising")
+- format (educational|entertainment|inspirational|tutorial|storytelling|behind-the-scenes|before-after|listicle|reaction|trend)
+- hook_pattern (question|bold-claim|statistic|controversy|curiosity-gap|direct-address|shock-value|relatable-struggle)
+- visual_style (talking-head|b-roll|text-overlay|split-screen|transitions|cinematic|screen-recording|lifestyle)
+- audio_type (voiceover|trending-audio|original-music|speech|no-audio|sound-effects)
+- content_summary (one sentence, max 80 chars)
+- niche_tags (3-5 specific tags)
+
+Respond with a JSON array — one object per reel, include the "id" field:
+[{{"id": "...", "topic": "...", ...}}, ...]
+
+JSON only."""
+
+        raw = _call_claude(
+            system=_REEL_PROFILE_SYSTEM,
+            user_prompt=user_prompt,
+            max_tokens=2500,
+            temperature=0.1,
+        )
+        if not raw:
+            continue
+        parsed = _extract_json(raw)
+        if not isinstance(parsed, list):
+            continue
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            rid = item.get("id")
+            if not rid:
+                continue
+            item.setdefault("topic", "general")
+            item.setdefault("format", "entertainment")
+            item.setdefault("hook_pattern", "direct-address")
+            item.setdefault("visual_style", "talking-head")
+            item.setdefault("audio_type", "voiceover")
+            item.setdefault("content_summary", "")
+            item.setdefault("niche_tags", [])
+            results[str(rid)] = item
+
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
 # 2. Multi-page reference synthesis
 # ══════════════════════════════════════════════════════════════════════
 

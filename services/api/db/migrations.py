@@ -104,6 +104,34 @@ MIGRATION_STATEMENTS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_user_page_reels_page_posted
     ON user_page_reels(user_page_id, posted_at DESC)
     """,
+    # reel_profiles: per-reel content profiling for Shadow Pages
+    """
+    CREATE TABLE IF NOT EXISTS reel_profiles (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        viral_reel_id UUID NOT NULL REFERENCES viral_reels(id) ON DELETE CASCADE,
+        topic VARCHAR(200),
+        format VARCHAR(100),
+        hook_pattern VARCHAR(200),
+        visual_style VARCHAR(100),
+        audio_type VARCHAR(100),
+        content_summary TEXT,
+        niche_tags TEXT[],
+        confidence FLOAT DEFAULT 0,
+        analyzed_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(viral_reel_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_reel_profiles_reel ON reel_profiles(viral_reel_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_reel_profiles_topic ON reel_profiles(topic)
+    """,
+    # user_pages: niche_tags array for onboarding niche selection
+    """
+    ALTER TABLE user_pages
+    ADD COLUMN IF NOT EXISTS niche_tags TEXT[]
+    """,
 ]
 
 

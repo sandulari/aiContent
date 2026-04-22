@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 from uuid import UUID
-from sqlalchemy import BigInteger, Boolean, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import ARRAY, BigInteger, Boolean, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from models.base import Base, UUIDMixin
@@ -25,6 +25,7 @@ class UserPage(UUIDMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_analyzed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     last_scraped_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    niche_tags: Mapped[list | None] = mapped_column(ARRAY(String), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, server_default=func.now())
 
     user: Mapped["User"] = relationship("User", back_populates="pages")

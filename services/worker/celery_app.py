@@ -21,6 +21,7 @@ app.conf.update(
     task_routes={
         "tasks.scraper.*": {"queue": "queue.scrape"},
         "tasks.discovery.*": {"queue": "queue.discover"},
+        "tasks.deep_discovery.*": {"queue": "queue.discover"},
         "tasks.downloader.*": {"queue": "queue.download"},
         "tasks.source_search.*": {"queue": "queue.search"},
         "tasks.enhancer.*": {"queue": "queue.enhance"},
@@ -68,3 +69,4 @@ import tasks.exporter  # noqa: F401, E402
 import tasks.analyze_page  # noqa: F401, E402
 import tasks.recommendation  # noqa: F401, E402
 import tasks.page_stats_snapshot  # noqa: F401, E402
+import tasks.deep_discovery  # noqa: F401, E402
