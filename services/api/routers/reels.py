@@ -52,6 +52,36 @@ async def get_reel(reel_id: UUID, current_user: User = Depends(get_current_user)
     page_result = await db.execute(select(ThemePage.username).where(ThemePage.id == reel.theme_page_id))
     source_page = page_result.scalar_one_or_none()
 
+    # Find similar reels from the same niche (not YouTube search results)
+    similar_reels = []
+    if reel.niche_id:
+        from sqlalchemy import text as sa_text
+        sim_result = await db.execute(
+            sa_text("""
+                SELECT vr.id, vr.ig_video_id, vr.ig_url, vr.caption, vr.view_count,
+                       vr.like_count, vr.posted_at, tp.username as source_page
+                FROM viral_reels vr
+                LEFT JOIN theme_pages tp ON tp.id = vr.theme_page_id
+                WHERE vr.niche_id = :niche_id
+                  AND vr.id != :reel_id
+                  AND vr.view_count > 10000
+                ORDER BY vr.view_count DESC
+                LIMIT 8
+            """),
+            {"niche_id": str(reel.niche_id), "reel_id": str(reel.id)},
+        )
+        for sr in sim_result.fetchall():
+            similar_reels.append({
+                "id": str(sr.id),
+                "ig_video_id": sr.ig_video_id,
+                "ig_url": sr.ig_url,
+                "caption": (sr.caption or "")[:120],
+                "view_count": sr.view_count,
+                "like_count": sr.like_count,
+                "source_page": sr.source_page,
+                "posted_at": str(sr.posted_at) if sr.posted_at else None,
+            })
+
     return {
         "id": str(reel.id), "ig_video_id": reel.ig_video_id, "ig_url": reel.ig_url,
         "thumbnail_url": reel.thumbnail_url, "view_count": reel.view_count,
@@ -71,6 +101,7 @@ async def get_reel(reel_id: UUID, current_user: User = Depends(get_current_user)
              "file_size_bytes": f.file_size_bytes, "created_at": str(f.created_at)}
             for f in reel.files
         ],
+        "similar_reels": similar_reels,
     }
 
 

@@ -328,49 +328,42 @@ export default function ReelDetailPage() {
         </Card>
       )}
 
-      {/* Similar content — alternative videos on the same topic */}
-      {hasSources && reel.sources.length > 1 && !canEdit && (
+      {/* Similar reels from the same niche — REAL similar content from Discover pool */}
+      {(reel as any).similar_reels?.length > 0 && (
         <div>
           <h3 className="text-sm font-medium text-[#e6edf3] mb-3">Similar Content</h3>
           <div className="space-y-2">
-            {reel.sources.slice(1).map((source) => {
-              const ytId = source.source_url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)?.[1];
-              const thumbSrc = source.source_thumbnail_url
-                || (ytId ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` : "");
-              return (
-              <div key={source.id} className="flex items-center gap-3 bg-[#161b22] border border-[#21262d] rounded-lg p-3">
-                {thumbSrc ? (
-                  <img
-                    src={thumbSrc}
-                    alt=""
-                    className="w-20 h-14 object-cover rounded flex-shrink-0 bg-[#21262d]"
-                    onError={(e) => { e.currentTarget.style.display = "none"; }}
-                  />
-                ) : (
-                  <div className="w-20 h-14 rounded flex-shrink-0 bg-[#21262d] flex items-center justify-center">
-                    <svg className="w-5 h-5 text-[#30363d]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" />
-                    </svg>
-                  </div>
-                )}
+            {(reel as any).similar_reels.map((sr: any) => (
+              <div
+                key={sr.id}
+                className="flex items-center gap-3 bg-[#161b22] border border-[#21262d] rounded-lg p-3 hover:border-[#30363d] cursor-pointer"
+                onClick={() => router.push(`/reels/${sr.id}`)}
+              >
+                <img
+                  src={`${api.files.getThumbnailUrl(sr.id)}?v=${Math.floor(Date.now() / 3600000)}`}
+                  alt=""
+                  className="w-20 h-14 object-cover rounded flex-shrink-0 bg-[#21262d]"
+                  onError={(e) => { e.currentTarget.style.display = "none"; }}
+                />
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs text-[#e6edf3] font-medium line-clamp-1">{source.source_title || "Video"}</p>
+                  <p className="text-xs text-[#e6edf3] font-medium line-clamp-2">{sr.caption || "Viral Reel"}</p>
                   <div className="flex items-center gap-2 mt-0.5 text-[10px] text-[#484f58]">
-                    <span className="uppercase text-[#58a6ff]">{source.source_type}</span>
-                    <span>{Math.round((source.match_confidence || 0) * 100)}% match</span>
+                    <span>{formatViews(sr.view_count)} views</span>
+                    {sr.source_page && <><span>·</span><span>@{sr.source_page}</span></>}
                   </div>
                 </div>
                 <div className="flex gap-2 flex-shrink-0">
-                  <a href={source.source_url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-[#7d8590] hover:text-[#e6edf3] px-2 py-1 border border-[#30363d] rounded">
-                    Preview
-                  </a>
-                  <Button size="sm" onClick={() => handleDownload(source.id)} loading={downloadingId === source.id}>
-                    Save
+                  {sr.ig_url && (
+                    <a href={sr.ig_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-[10px] text-[#7d8590] hover:text-[#e6edf3] px-2 py-1 border border-[#30363d] rounded">
+                      View
+                    </a>
+                  )}
+                  <Button size="sm" onClick={(e: any) => { e.stopPropagation(); router.push(`/reels/${sr.id}`); }}>
+                    Use
                   </Button>
                 </div>
               </div>
-            );
-            })}
+            ))}
           </div>
         </div>
       )}
