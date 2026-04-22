@@ -293,17 +293,19 @@ export default function ReelDetailPage() {
               return (
                 <div className="flex items-center gap-3 bg-[#0d1117] rounded-lg p-3">
                   {/* Video thumbnail — always show */}
-                  <img
-                    src={(() => {
-                      if (best.source_thumbnail_url) return best.source_thumbnail_url;
-                      const ytId = best.source_url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)?.[1];
-                      if (ytId) return `https://img.youtube.com/vi/${ytId}/mqdefault.jpg`;
-                      return api.files.getThumbnailUrl(reel.id);
-                    })()}
-                    alt=""
-                    className="w-32 h-20 object-cover rounded-md flex-shrink-0 bg-[#21262d]"
-                    onError={(e) => { e.currentTarget.src = api.files.getThumbnailUrl(reel.id); }}
-                  />
+                  {(() => {
+                    const ytId = best.source_url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)?.[1];
+                    const src = best.source_thumbnail_url || (ytId ? `https://img.youtube.com/vi/${ytId}/mqdefault.jpg` : "");
+                    return src ? (
+                      <img src={src} alt="" className="w-32 h-20 object-cover rounded-md flex-shrink-0 bg-[#21262d]" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                    ) : (
+                      <div className="w-32 h-20 rounded-md flex-shrink-0 bg-[#21262d] flex items-center justify-center">
+                        <svg className="w-6 h-6 text-[#30363d]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" />
+                        </svg>
+                      </div>
+                    );
+                  })()}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-[#e6edf3] font-medium line-clamp-2">{best.source_title || "Video"}</p>
                     <div className="flex items-center gap-2 mt-1 text-[10px] text-[#484f58]">
@@ -331,19 +333,26 @@ export default function ReelDetailPage() {
         <div>
           <h3 className="text-sm font-medium text-[#e6edf3] mb-3">Similar Content</h3>
           <div className="space-y-2">
-            {reel.sources.slice(1).map((source) => (
+            {reel.sources.slice(1).map((source) => {
+              const ytId = source.source_url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)?.[1];
+              const thumbSrc = source.source_thumbnail_url
+                || (ytId ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` : "");
+              return (
               <div key={source.id} className="flex items-center gap-3 bg-[#161b22] border border-[#21262d] rounded-lg p-3">
-                <img
-                  src={(() => {
-                    if (source.source_thumbnail_url) return source.source_thumbnail_url;
-                    const ytId = source.source_url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)?.[1];
-                    if (ytId) return `https://img.youtube.com/vi/${ytId}/default.jpg`;
-                    return api.files.getThumbnailUrl(reel.id);
-                  })()}
-                  alt=""
-                  className="w-20 h-14 object-cover rounded flex-shrink-0 bg-[#21262d]"
-                  onError={(e) => { e.currentTarget.src = api.files.getThumbnailUrl(reel.id); }}
-                />
+                {thumbSrc ? (
+                  <img
+                    src={thumbSrc}
+                    alt=""
+                    className="w-20 h-14 object-cover rounded flex-shrink-0 bg-[#21262d]"
+                    onError={(e) => { e.currentTarget.style.display = "none"; }}
+                  />
+                ) : (
+                  <div className="w-20 h-14 rounded flex-shrink-0 bg-[#21262d] flex items-center justify-center">
+                    <svg className="w-5 h-5 text-[#30363d]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" />
+                    </svg>
+                  </div>
+                )}
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-[#e6edf3] font-medium line-clamp-1">{source.source_title || "Video"}</p>
                   <div className="flex items-center gap-2 mt-0.5 text-[10px] text-[#484f58]">
@@ -360,7 +369,8 @@ export default function ReelDetailPage() {
                   </Button>
                 </div>
               </div>
-            ))}
+            );
+            })}
           </div>
         </div>
       )}
