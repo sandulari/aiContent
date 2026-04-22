@@ -292,13 +292,18 @@ export default function ReelDetailPage() {
               const best = reel.sources[0]; // Already sorted by confidence
               return (
                 <div className="flex items-center gap-3 bg-[#0d1117] rounded-lg p-3">
-                  {/* Video thumbnail */}
-                  {(best.source_thumbnail_url || best.source_url.includes("youtube")) && (
-                    <img
-                      src={best.source_thumbnail_url || `https://img.youtube.com/vi/${best.source_url.match(/[?&]v=([^&]+)/)?.[1] || ""}/mqdefault.jpg`}
-                      alt="" className="w-32 h-20 object-cover rounded-md flex-shrink-0 bg-[#21262d]"
-                    />
-                  )}
+                  {/* Video thumbnail — always show */}
+                  <img
+                    src={(() => {
+                      if (best.source_thumbnail_url) return best.source_thumbnail_url;
+                      const ytId = best.source_url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)?.[1];
+                      if (ytId) return `https://img.youtube.com/vi/${ytId}/mqdefault.jpg`;
+                      return api.files.getThumbnailUrl(reel.id);
+                    })()}
+                    alt=""
+                    className="w-32 h-20 object-cover rounded-md flex-shrink-0 bg-[#21262d]"
+                    onError={(e) => { e.currentTarget.src = api.files.getThumbnailUrl(reel.id); }}
+                  />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-[#e6edf3] font-medium line-clamp-2">{best.source_title || "Video"}</p>
                     <div className="flex items-center gap-2 mt-1 text-[10px] text-[#484f58]">
@@ -328,12 +333,17 @@ export default function ReelDetailPage() {
           <div className="space-y-2">
             {reel.sources.slice(1).map((source) => (
               <div key={source.id} className="flex items-center gap-3 bg-[#161b22] border border-[#21262d] rounded-lg p-3">
-                {(source.source_thumbnail_url || source.source_url.includes("youtube")) && (
-                  <img
-                    src={source.source_thumbnail_url || `https://img.youtube.com/vi/${source.source_url.match(/[?&]v=([^&]+)/)?.[1] || ""}/default.jpg`}
-                    alt="" className="w-20 h-14 object-cover rounded flex-shrink-0 bg-[#21262d]"
-                  />
-                )}
+                <img
+                  src={(() => {
+                    if (source.source_thumbnail_url) return source.source_thumbnail_url;
+                    const ytId = source.source_url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)?.[1];
+                    if (ytId) return `https://img.youtube.com/vi/${ytId}/default.jpg`;
+                    return api.files.getThumbnailUrl(reel.id);
+                  })()}
+                  alt=""
+                  className="w-20 h-14 object-cover rounded flex-shrink-0 bg-[#21262d]"
+                  onError={(e) => { e.currentTarget.src = api.files.getThumbnailUrl(reel.id); }}
+                />
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-[#e6edf3] font-medium line-clamp-1">{source.source_title || "Video"}</p>
                   <div className="flex items-center gap-2 mt-0.5 text-[10px] text-[#484f58]">
