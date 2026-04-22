@@ -363,24 +363,45 @@ def _generate_for_page(user_page_id: str) -> dict:
         )
 
         # ── 6. Pull candidate pool from viral_reels ─────────────
-        # Over-fetch across progressive view floors so the scorer has
-        # enough variety to find genuine matches.
+        # Filter by the page's niche to avoid showing irrelevant content
+        # (e.g. cat videos for a business page).
+        niche_name = own_profile.get("niche_primary", "") if own_profile else ""
+        niche_ids_result = session.execute(
+            text("""
+                SELECT id FROM niches WHERE slug IN (
+                    :niche,
+                    CASE WHEN :niche = 'business' THEN 'motivation'
+                         WHEN :niche = 'motivation' THEN 'business'
+                         WHEN :niche = 'fitness' THEN 'health'
+                         WHEN :niche = 'health' THEN 'fitness'
+                         ELSE :niche END
+                )
+            """),
+            {"niche": niche_name.lower() if niche_name else "business"},
+        ).fetchall()
+        niche_ids = [str(r.id) for r in niche_ids_result] if niche_ids_result else []
+
         candidates: list = []
         seen_ids: set[str] = set()
         for floor in VIEW_FLOORS:
+            niche_filter = ""
+            params: dict = {"floor": floor, "lim": 2000}
+            if niche_ids:
+                niche_filter = "AND niche_id = ANY(:niche_ids)"
+                params["niche_ids"] = niche_ids
             rows = session.execute(
                 text(
-                    """
+                    f"""
                     SELECT id, caption, view_count, like_count, comment_count,
                            duration_seconds, ig_url, theme_page_id, posted_at
                     FROM viral_reels
                     WHERE view_count >= :floor
-                      AND thumbnail_url IS NOT NULL AND thumbnail_url != ''
+                    {niche_filter}
                     ORDER BY view_count DESC
                     LIMIT :lim
                     """
                 ),
-                {"floor": floor, "lim": 2000},
+                params,
             ).fetchall()
             for r in rows:
                 rid = str(r.id)
