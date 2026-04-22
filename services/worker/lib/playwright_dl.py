@@ -38,22 +38,18 @@ async def _download_via_browser(url: str, output_path: str, timeout_ms: int = 60
         ])
         page = await ctx.new_page()
 
-        # Intercept video stream responses and save the body
+        # Capture video stream URLs (not bodies — YouTube uses range requests)
+        video_stream_urls = []
+
         async def handle_response(response):
             try:
                 u = response.url
-                is_video = False
                 if "googlevideo.com" in u and "videoplayback" in u:
-                    is_video = True
+                    video_stream_urls.append(u)
                 elif "tiktokcdn.com" in u and ".mp4" in u:
-                    is_video = True
+                    video_stream_urls.append(u)
                 elif "v16-webapp" in u and ".mp4" in u:
-                    is_video = True
-
-                if is_video and response.status == 200:
-                    body = await response.body()
-                    if len(body) > 10000:  # Ignore tiny fragments
-                        video_chunks.append(body)
+                    video_stream_urls.append(u)
             except:
                 pass
 
@@ -115,18 +111,32 @@ async def _download_via_browser(url: str, output_path: str, timeout_ms: int = 60
         finally:
             await browser.close()
 
-    if video_chunks:
-        # Combine all chunks into one file
-        with open(output_path, "wb") as f:
-            for chunk in video_chunks:
-                f.write(chunk)
-        file_size = os.path.getsize(output_path)
-        if file_size > 50000:  # Must be a real video (>50KB)
-            result["downloaded"] = True
-            result["file_size"] = file_size
-            return result
-        else:
-            os.remove(output_path)
+    if video_stream_urls:
+        # Download the stream URL with proper headers
+        # Pick the best URL (longest = most params = highest quality)
+        stream_url = max(video_stream_urls, key=len)
+
+        try:
+            async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+                # YouTube stream URLs work when requested with the right headers
+                resp = await client.get(stream_url, headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                    "Referer": "https://www.youtube.com/",
+                    "Origin": "https://www.youtube.com",
+                    "Range": "bytes=0-",
+                })
+                if resp.status_code in (200, 206):
+                    with open(output_path, "wb") as f:
+                        f.write(resp.content)
+                    file_size = os.path.getsize(output_path)
+                    if file_size > 50000:
+                        result["downloaded"] = True
+                        result["file_size"] = file_size
+                        return result
+                    else:
+                        os.remove(output_path)
+        except Exception as e:
+            logger.warning("Stream download failed: %s", e)
 
     return None
 
