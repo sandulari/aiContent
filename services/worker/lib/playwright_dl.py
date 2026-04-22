@@ -31,6 +31,11 @@ async def _download_via_browser(url: str, output_path: str, timeout_ms: int = 60
         ctx = await browser.new_context(
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
+        # Set YouTube consent cookie to bypass the consent dialog
+        await ctx.add_cookies([
+            {"name": "SOCS", "value": "CAISHAgCEhJnd3NfMjAyNDA4MjgtMF9SQzIaAmVuIAEaBgiA_eSzBg", "domain": ".youtube.com", "path": "/"},
+            {"name": "CONSENT", "value": "PENDING+987", "domain": ".youtube.com", "path": "/"},
+        ])
         page = await ctx.new_page()
 
         # Intercept video stream responses and save the body
