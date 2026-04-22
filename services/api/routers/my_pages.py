@@ -186,6 +186,135 @@ async def list_my_pages(
     return items
 
 
+async def _auto_discover_for_niche(page_id: str, ig_username: str, niche_slug: str, db: AsyncSession):
+    """Discover theme pages and scrape reels for the student's niche.
+
+    Uses Instagram's suggested accounts from the student's page to find
+    similar accounts, then scrapes their reels. This gives every niche
+    instant content on Discover — not just business.
+    """
+    import asyncio
+    import uuid as uuid_mod
+
+    from services.instagram_api import get_profile, get_user_reels, get_suggested_accounts
+    from sqlalchemy import text as sa_text
+
+    # 1. Get the student's IG profile to find their PK
+    profile = await get_profile(ig_username)
+    if not profile:
+        return 0
+
+    user_pk = profile.get("pk")
+    if not user_pk:
+        return 0
+
+    # 2. Get suggested accounts
+    suggested = await get_suggested_accounts(str(user_pk))
+    if not suggested:
+        return 0
+
+    # 3. Get the niche ID
+    niche_result = await db.execute(
+        sa_text("SELECT id FROM niches WHERE slug = :slug OR LOWER(name) LIKE :like LIMIT 1"),
+        {"slug": niche_slug.lower(), "like": f"%{niche_slug.lower()}%"},
+    )
+    niche_id = niche_result.scalar()
+    if not niche_id:
+        # Create the niche if it doesn't exist
+        niche_id = str(uuid_mod.uuid4())
+        await db.execute(
+            sa_text("INSERT INTO niches (id, name, slug, is_active) VALUES (:id, :name, :slug, true) ON CONFLICT (slug) DO NOTHING"),
+            {"id": niche_id, "name": niche_slug.title(), "slug": niche_slug.lower()},
+        )
+        niche_result2 = await db.execute(sa_text("SELECT id FROM niches WHERE slug = :slug"), {"slug": niche_slug.lower()})
+        niche_id = niche_result2.scalar() or niche_id
+
+    niche_id = str(niche_id)
+
+    # 4. For each suggested account, create theme page + scrape reels
+    total_reels = 0
+
+    for acct in suggested[:15]:  # Max 15 suggested accounts
+        username = acct.get("username", "")
+        pk = acct.get("pk", "")
+        if not username or not pk:
+            continue
+
+        # Skip if already exists
+        existing = await db.execute(
+            sa_text("SELECT id FROM theme_pages WHERE username = :u"),
+            {"u": username},
+        )
+        if existing.scalar():
+            continue
+
+        # Create theme page
+        tp_id = str(uuid_mod.uuid4())
+        await db.execute(
+            sa_text("""
+                INSERT INTO theme_pages (id, username, niche_id, is_active, evaluation_status, discovered_via, created_at)
+                VALUES (:id, :username, :niche_id, true, 'confirmed', 'auto_discover', :now)
+                ON CONFLICT (username) DO NOTHING
+            """),
+            {"id": tp_id, "username": username, "niche_id": niche_id, "now": datetime.utcnow()},
+        )
+
+        # Get real tp_id (in case ON CONFLICT)
+        tp_result = await db.execute(sa_text("SELECT id FROM theme_pages WHERE username = :u"), {"u": username})
+        real_tp_id = str(tp_result.scalar() or tp_id)
+
+        # Scrape reels (1 page = 12 reels, fast)
+        try:
+            reels = await get_user_reels(str(pk), max_pages=1)
+            for reel in reels:
+                code = reel.get("shortcode") or reel.get("code", "")
+                if not code:
+                    continue
+                views = int(reel.get("view_count") or reel.get("play_count") or 0)
+                likes = int(reel.get("like_count", 0))
+                comments = int(reel.get("comment_count", 0))
+                taken_at = reel.get("taken_at")
+                caption = reel.get("caption", "")
+                if isinstance(caption, dict):
+                    caption = caption.get("text", "")
+                caption = str(caption or "")[:500]
+
+                thumb = reel.get("thumbnail_url", "")
+                posted_at = None
+                if taken_at:
+                    posted_at = datetime.fromtimestamp(taken_at)
+
+                reel_id = str(uuid_mod.uuid4())
+                await db.execute(
+                    sa_text("""
+                        INSERT INTO viral_reels (id, theme_page_id, ig_video_id, ig_url, thumbnail_url,
+                            view_count, like_count, comment_count, caption, posted_at, scraped_at,
+                            niche_id, status, created_at)
+                        VALUES (:id, :tp_id, :code, :url, :thumb, :views, :likes, :comments,
+                            :caption, :posted_at, :now, :niche_id, 'discovered', :now)
+                        ON CONFLICT (ig_video_id) DO UPDATE SET
+                            view_count = EXCLUDED.view_count, like_count = EXCLUDED.like_count
+                    """),
+                    {
+                        "id": reel_id, "tp_id": real_tp_id, "code": code,
+                        "url": f"https://www.instagram.com/reel/{code}/",
+                        "thumb": thumb[:500] if thumb else "",
+                        "views": views, "likes": likes, "comments": comments,
+                        "caption": caption.replace("'", ""), "posted_at": posted_at,
+                        "now": datetime.utcnow(), "niche_id": niche_id,
+                    },
+                )
+                total_reels += 1
+        except Exception as e:
+            logger.warning("Failed to scrape @%s: %s", username, str(e)[:100])
+
+        # Small delay to avoid rate limits
+        await asyncio.sleep(0.5)
+
+    await db.flush()
+    return total_reels
+
+
 @router.post("", response_model=PageResponse, status_code=status.HTTP_201_CREATED)
 async def add_page(
     body: AddPageRequest,
@@ -246,6 +375,22 @@ async def add_page(
             trigger_page_stats_snapshot(page.id)
         except Exception as exc:
             logger.warning("Failed to enqueue initial snapshot for @%s: %s", username, exc)
+
+        # Auto-discover theme pages for the student's niche
+        # This ensures every niche has content, not just business
+        try:
+            from sqlalchemy import text as sa_text
+
+            niche_detect_result = await db.execute(
+                sa_text("SELECT niche_primary FROM page_profiles WHERE user_page_id = :pid ORDER BY analyzed_at DESC LIMIT 1"),
+                {"pid": str(page.id)},
+            )
+            detected_niche = niche_detect_result.scalar() or "business"
+
+            reels_found = await _auto_discover_for_niche(str(page.id), username, detected_niche, db)
+            logger.info("Auto-discovered %d reels for @%s (niche=%s)", reels_found, username, detected_niche)
+        except Exception as exc:
+            logger.warning("Auto-discover failed for @%s: %s", username, str(exc)[:100])
 
         # Generate niche-filtered recommendations IN-PROCESS from existing viral reels.
         # Only recommends reels from the SAME niche as the user's page.
