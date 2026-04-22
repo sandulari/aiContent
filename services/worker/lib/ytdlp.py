@@ -71,7 +71,9 @@ def download_video(url: str, video_id: str) -> DownloadResult:
             "yt-dlp", "--format", "best", "--merge-output-format", "mp4",
             "--write-info-json", "--no-playlist", "--retries", "3",
             "--output", output_template, "--no-overwrites",
-            "--no-check-certificates", url,
+            "--no-check-certificates",
+            "--extractor-args", "youtube:player_client=android",
+            url,
         ]
         try:
             subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=600, check=True)
