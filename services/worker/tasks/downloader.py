@@ -64,8 +64,29 @@ def download_video_task(self, reel_id: str, source_id: str):
         source_type = source.source_type
         logger.info("Downloading from %s (%s)", source_url, source_type)
 
-        # Download with yt-dlp
-        result = download_video(source_url, video_id)
+        # Download with yt-dlp (fast, works for most platforms)
+        # Falls back to Playwright (headless browser) if yt-dlp is bot-blocked
+        try:
+            result = download_video(source_url, video_id)
+        except Exception as ytdlp_err:
+            logger.warning("yt-dlp failed for %s, trying Playwright browser: %s", video_id, str(ytdlp_err)[:100])
+            from lib.playwright_dl import download_via_playwright
+            pw_result = download_via_playwright(source_url, video_id)
+            if pw_result:
+                # Convert Playwright result to match yt-dlp DownloadResult format
+                from lib.ytdlp import DownloadResult
+                result = DownloadResult(
+                    file_path=pw_result["file_path"],
+                    info_json_path="",
+                    resolution="",
+                    fps=0,
+                    codec="",
+                    bitrate=0,
+                    duration=pw_result.get("duration", 0),
+                    file_size=pw_result.get("file_size", 0),
+                )
+            else:
+                raise ytdlp_err  # Both failed
 
         # Upload to MinIO
         minio_key = f"{video_id}/{os.path.basename(result.file_path)}"
