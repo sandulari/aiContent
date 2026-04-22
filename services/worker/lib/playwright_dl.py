@@ -106,39 +106,45 @@ async def _download_via_browser(url: str, output_path: str, timeout_ms: int = 60
             except:
                 pass
 
+            # Download the video INSIDE the browser using JavaScript fetch
+            if video_stream_urls:
+                stream_url = max(video_stream_urls, key=len)
+                logger.info("Downloading stream inside browser: %s", stream_url[:80])
+
+                # Use the browser's fetch to download (same session = no 403)
+                video_base64 = await page.evaluate(f"""
+                    async () => {{
+                        try {{
+                            const resp = await fetch("{stream_url}", {{
+                                headers: {{ "Range": "bytes=0-" }}
+                            }});
+                            const blob = await resp.blob();
+                            const reader = new FileReader();
+                            return new Promise((resolve) => {{
+                                reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                                reader.readAsDataURL(blob);
+                            }});
+                        }} catch(e) {{
+                            return null;
+                        }}
+                    }}
+                """)
+
+                if video_base64:
+                    import base64
+                    video_bytes = base64.b64decode(video_base64)
+                    if len(video_bytes) > 50000:
+                        with open(output_path, "wb") as f:
+                            f.write(video_bytes)
+                        result["downloaded"] = True
+                        result["file_size"] = len(video_bytes)
+
         except Exception as e:
             logger.warning("Playwright navigation failed for %s: %s", url, e)
         finally:
             await browser.close()
 
-    if video_stream_urls:
-        # Download the stream URL with proper headers
-        # Pick the best URL (longest = most params = highest quality)
-        stream_url = max(video_stream_urls, key=len)
-
-        try:
-            async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-                # YouTube stream URLs work when requested with the right headers
-                resp = await client.get(stream_url, headers={
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-                    "Referer": "https://www.youtube.com/",
-                    "Origin": "https://www.youtube.com",
-                    "Range": "bytes=0-",
-                })
-                if resp.status_code in (200, 206):
-                    with open(output_path, "wb") as f:
-                        f.write(resp.content)
-                    file_size = os.path.getsize(output_path)
-                    if file_size > 50000:
-                        result["downloaded"] = True
-                        result["file_size"] = file_size
-                        return result
-                    else:
-                        os.remove(output_path)
-        except Exception as e:
-            logger.warning("Stream download failed: %s", e)
-
-    return None
+    return result if result.get("downloaded") else None
 
 
 def download_via_playwright(url: str, video_id: str) -> dict | None:
