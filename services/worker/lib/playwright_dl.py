@@ -56,16 +56,42 @@ async def _download_via_browser(url: str, output_path: str, timeout_ms: int = 60
 
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(2000)
+
+            # Dismiss YouTube consent/cookie dialog if present
+            if "youtube.com" in url:
+                for selector in [
+                    "button[aria-label*='Accept']",
+                    "button[aria-label*='Reject']",
+                    "button.yt-spec-button-shape-next--call-to-action",
+                    "[aria-label*='consent'] button",
+                    "form[action*='consent'] button",
+                    "tp-yt-paper-dialog button.yt-spec-button-shape-next",
+                ]:
+                    try:
+                        btn = page.locator(selector).first
+                        if await btn.is_visible(timeout=1000):
+                            await btn.click()
+                            await page.wait_for_timeout(1500)
+                            break
+                    except:
+                        continue
 
             result["title"] = await page.title()
 
-            # Click play
+            # Click play button
             if "youtube.com" in url:
                 try:
                     play = page.locator("button.ytp-large-play-button")
                     if await play.is_visible(timeout=2000):
                         await play.click()
+                except:
+                    pass
+                # Also try clicking the video element directly
+                try:
+                    video = page.locator("video").first
+                    if await video.is_visible(timeout=1000):
+                        await video.click()
                 except:
                     pass
 
