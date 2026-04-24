@@ -136,6 +136,39 @@ export interface Template {
   is_default: boolean; created_at: string; updated_at: string;
 }
 
+export interface TextLayer {
+  id: string;
+  role: "headline" | "subtitle" | "handle" | "account_name" | "custom";
+  text: string;
+  x: number;
+  y: number;
+  width?: number;
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: number;
+  color: string;
+  alignment: "left" | "center" | "right";
+  letterSpacing: number;
+  textTransform: "none" | "uppercase" | "lowercase" | "capitalize";
+  shadowEnabled: boolean;
+  shadowColor: string;
+  shadowBlur: number;
+  shadowX: number;
+  shadowY: number;
+  strokeEnabled: boolean;
+  strokeColor: string;
+  strokeWidth: number;
+  opacity: number;
+  anchor: "center" | "top-left";
+  highlights?: Array<{
+    match: string;              // the phrase to highlight (case-insensitive, all occurrences)
+    bgColor: string;            // hex
+    textColor?: string;         // hex, optional — falls back to layer's color if omitted
+    borderRadius?: number;      // px, default 6
+    paddingX?: number;          // px, default 4
+  }>;
+}
+
 export interface UserExport {
   id: string; user_id: string; user_page_id: string | null; viral_reel_id: string; template_id: string;
   headline_text: string; headline_style: Record<string, any>;
@@ -144,6 +177,7 @@ export interface UserExport {
   video_trim: Record<string, any>; audio_config: Record<string, any>;
   logo_overrides?: Record<string, any> | null;
   logo_override_key?: string | null;
+  text_layers_overrides?: TextLayer[] | null;
   export_minio_key: string | null; export_status: string;
   created_at: string; exported_at: string | null;
 }
@@ -152,6 +186,72 @@ export interface Niche { id: string; name: string; slug: string; }
 
 export interface AITextResult {
   headlines: string[]; subtitles: string[]; caption_suggestion: string | null;
+}
+
+// ── Instagram OAuth ──────────────────────────────────────────────────────
+
+export interface IgStatus {
+  connected: boolean;
+  ig_user_id: string | null;
+  ig_username: string | null;
+  ig_account_type: string | null;
+  ig_profile_picture_url: string | null;
+  ig_token_expires_at: string | null;
+  ig_connected_at: string | null;
+  can_publish: boolean;
+}
+
+// ── Scheduled Reels ──────────────────────────────────────────────────────
+
+export type ScheduledReelStatus =
+  | "queued" | "processing" | "published" | "failed" | "cancelled";
+
+export interface ScheduledReelUserTag {
+  username: string;
+  x?: number;
+  y?: number;
+}
+
+export interface ScheduledReel {
+  id: string;
+  user_id: string;
+  user_export_id: string;
+  caption: string | null;
+  user_tags: ScheduledReelUserTag[] | null;
+  scheduled_at: string;
+  timezone: string;
+  status: ScheduledReelStatus;
+  share_to_feed: boolean;
+  attempt_count: number;
+  last_error: string | null;
+  ig_container_id: string | null;
+  ig_media_id: string | null;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduledReelsList {
+  items: ScheduledReel[];
+  counts: Record<ScheduledReelStatus, number>;
+  publishes_last_24h: number;
+  publishes_remaining_today: number;
+}
+
+export interface ScheduleCreatePayload {
+  user_export_id: string;
+  scheduled_at: string;           // ISO8601 with tz
+  timezone?: string;              // IANA tz, default "UTC"
+  caption?: string | null;
+  user_tags?: ScheduledReelUserTag[] | null;
+  share_to_feed?: boolean;
+}
+
+export interface ScheduleUpdatePayload {
+  scheduled_at?: string;
+  caption?: string | null;
+  user_tags?: ScheduledReelUserTag[] | null;
+  share_to_feed?: boolean;
 }
 
 // ── Fetch ────────────────────────────────────────────────────────────────
@@ -382,6 +482,46 @@ export const api = {
         assistant_message: string;
         suggestions: { headlines: string[]; subtitles: string[]; caption: string };
       }>("/api/ai/chat", { method: "POST", body: JSON.stringify(data) });
+    },
+  },
+
+  ig: {
+    status() { return req<IgStatus>("/api/ig/oauth/status"); },
+    start() { return req<{ authorize_url: string }>("/api/ig/oauth/start"); },
+    refresh() { return req<{ expires_at: string }>("/api/ig/oauth/refresh", { method: "POST" }); },
+    disconnect() { return req<{ disconnected: boolean }>("/api/ig/oauth/disconnect", { method: "POST" }); },
+  },
+
+  scheduled: {
+    list(params?: { status?: ScheduledReelStatus; from?: string; to?: string; limit?: number; offset?: number }) {
+      return req<ScheduledReelsList>("/api/scheduled-reels", { params: params as any });
+    },
+    get(id: string) { return req<ScheduledReel>(`/api/scheduled-reels/${id}`); },
+    create(data: ScheduleCreatePayload) {
+      return req<ScheduledReel>("/api/scheduled-reels", { method: "POST", body: JSON.stringify(data) });
+    },
+    update(id: string, data: ScheduleUpdatePayload) {
+      return req<ScheduledReel>(`/api/scheduled-reels/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+    },
+    cancel(id: string) { return req<void>(`/api/scheduled-reels/${id}`, { method: "DELETE" }); },
+    retry(id: string) {
+      return req<ScheduledReel>(`/api/scheduled-reels/${id}/retry`, { method: "POST" });
+    },
+    insights(id: string) {
+      return req<{
+        scheduled_reel_id: string;
+        ig_media_id: string;
+        fetched_at: string;
+        metrics: {
+          reach: number;
+          views: number;
+          likes: number;
+          comments: number;
+          shares: number;
+          saved: number;
+          total_interactions: number;
+        };
+      }>(`/api/scheduled-reels/${id}/insights`);
     },
   },
 };

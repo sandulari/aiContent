@@ -94,9 +94,31 @@ def _normalise_logo_overrides(raw: dict | None) -> dict:
 
 async def _apply_template_to_export(export: UserExport, template: UserTemplate) -> None:
     """Copy a template's defaults onto an export row (pre-flush)."""
+    import copy
+    import uuid as _uuid
+
     export.headline_style = _normalise_text_style(template.headline_defaults)
     export.subtitle_style = _normalise_text_style(template.subtitle_defaults)
     export.logo_overrides = _normalise_logo_overrides(template.logo_position)
+
+    # Multi-layer: seed text_layers_overrides from the template's text_layers
+    # so the editor shows the template's layout on first open. For headline /
+    # subtitle roles, splice in the create request's headline_text /
+    # subtitle_text so the user's copy ends up where they expect.
+    src_layers = template.text_layers or []
+    if src_layers:
+        cloned: list[dict] = []
+        for layer in src_layers:
+            l = copy.deepcopy(layer)
+            # Fresh id per export so edits don't collide with the template.
+            l["id"] = str(_uuid.uuid4())
+            role = l.get("role")
+            if role == "headline" and export.headline_text:
+                l["text"] = export.headline_text
+            elif role == "subtitle" and export.subtitle_text:
+                l["text"] = export.subtitle_text
+            cloned.append(l)
+        export.text_layers_overrides = cloned
 
 
 _TEXT_MAX = 500
@@ -121,6 +143,10 @@ class ExportUpdateRequest(BaseModel):
     video_trim: Dict[str, Any] | None = None
     audio_config: Dict[str, Any] | None = None
     logo_overrides: Dict[str, Any] | None = None
+    # Per-export override for the multi-layer text list. Send a list to
+    # override the template's `text_layers`; pass an empty list to
+    # explicitly render zero text layers for this export.
+    text_layers_overrides: List[Dict[str, Any]] | None = None
     download_filename: str | None = Field(default=None, max_length=200)
 
 
@@ -511,6 +537,7 @@ def _export_to_dict(e: UserExport) -> dict:
         "caption_text": e.caption_text,
         "video_transform": e.video_transform, "video_trim": e.video_trim,
         "audio_config": e.audio_config, "logo_overrides": e.logo_overrides,
+        "text_layers_overrides": e.text_layers_overrides,
         "logo_override_key": e.logo_override_key,
         "download_filename": e.download_filename,
         "export_minio_key": e.export_minio_key, "export_status": e.export_status,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback, useState, useLayoutEffect } from "react";
+import type { TextLayer } from "@/lib/api";
 
 interface CanvasLayer {
   id: string;
@@ -18,6 +19,13 @@ interface CanvasProps {
   onSelectLayer: (id: string) => void;
   onUpdateLayerProps: (id: string, props: Record<string, any>) => void;
   backgroundColor?: string;
+  // Dynamic text layers. When non-null/non-empty, these override the
+  // legacy headline/subtitle layers coming through `layers`. Each
+  // layer is selectable/draggable and reports updates through
+  // onUpdateTextLayer(id, partial).
+  textLayers?: TextLayer[] | null;
+  textLayerVisibility?: Record<string, boolean>;
+  onUpdateTextLayer?: (id: string, partial: Partial<TextLayer>) => void;
 }
 
 // Design canvas (the logical 9:16 reel size used for saving)
@@ -35,6 +43,9 @@ export function Canvas({
   onSelectLayer,
   onUpdateLayerProps,
   backgroundColor,
+  textLayers,
+  textLayerVisibility,
+  onUpdateTextLayer,
 }: CanvasProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -83,6 +94,9 @@ export function Canvas({
   }, []);
 
   const getLayer = (id: string) => layers.find((l) => l.id === id);
+  const getTextLayer = (id: string) =>
+    textLayers ? textLayers.find((t) => t.id === id) : undefined;
+  const useDynamicText = Array.isArray(textLayers) && textLayers.length > 0;
 
   // ── Drag ─────────────────────────────────────────────────────────────
   // Important: all coordinate math happens in the *logical* 360×640 space.
@@ -93,13 +107,14 @@ export function Canvas({
     e.preventDefault();
     onSelectLayer(id);
     const layer = getLayer(id);
-    if (!layer) return;
+    const textLayer = getTextLayer(id);
+    if (!layer && !textLayer) return;
     setDrag({
       id,
       handle,
       startX: e.clientX,
       startY: e.clientY,
-      orig: { ...layer.props },
+      orig: layer ? { ...layer.props } : { ...(textLayer as any) },
     });
   };
 
@@ -174,6 +189,7 @@ export function Canvas({
             break;
         }
       } else {
+        const textLayer = getTextLayer(drag.id);
         if (drag.handle === "move") {
           let nx = Math.max(0, Math.min(100, (o.x || 50) + (dx / CANVAS_W) * 100));
           let ny = Math.max(0, Math.min(100, (o.y || 50) + (dy / CANVAS_H) * 100));
@@ -184,7 +200,11 @@ export function Canvas({
           if (nearV) nx = 50;
           if (nearH) ny = 50;
           setGuides({ v: nearV, h: nearH });
-          onUpdateLayerProps(drag.id, { x: nx, y: ny });
+          if (textLayer && onUpdateTextLayer) {
+            onUpdateTextLayer(drag.id, { x: nx, y: ny });
+          } else {
+            onUpdateLayerProps(drag.id, { x: nx, y: ny });
+          }
         } else {
           const layer = getLayer(drag.id);
           if (layer?.type === "logo") {
@@ -194,6 +214,18 @@ export function Canvas({
                 size: Math.max(20, Math.min(260, (o.size || 56) + dx * 0.5)),
               });
             }
+          } else if (textLayer && onUpdateTextLayer) {
+            // Dynamic text layer width is stored as a percentage of
+            // canvas width (0-100) on the schema. Convert the pixel
+            // drag delta to percentage points before applying.
+            const origPct =
+              typeof o.width === "number" ? o.width : 85;
+            const deltaPct = (dx / CANVAS_W) * 100;
+            let newPct = origPct;
+            if (drag.handle === "r") newPct = origPct + deltaPct * 2;
+            else if (drag.handle === "l") newPct = origPct - deltaPct * 2;
+            newPct = Math.max(10, Math.min(100, newPct));
+            onUpdateTextLayer(drag.id, { width: newPct });
           } else {
             // Text box width handles. The box stays centered on its
             // anchor point (Canva-style), so the width grows
@@ -212,7 +244,7 @@ export function Canvas({
         }
       }
     },
-    [drag, scale, onUpdateLayerProps]
+    [drag, scale, onUpdateLayerProps, onUpdateTextLayer, textLayers]
   );
 
   const onMouseUp = useCallback(() => {
@@ -288,6 +320,79 @@ export function Canvas({
     "Outfit": "var(--font-outfit)",
   };
 
+  // ── Highlight renderer ─────────────────────────────────────────────
+  // Interleave plain-text and highlighted spans so matched phrases get
+  // a colored background pill. Case-insensitive match, longer phrases
+  // win on overlapping spans (matches the backend resolver).
+  type HighlightSpec = {
+    match: string;
+    bgColor: string;
+    textColor?: string;
+    borderRadius?: number;
+    paddingX?: number;
+  };
+  const renderTextWithHighlights = (
+    text: string,
+    highlights: HighlightSpec[] | undefined,
+    baseColor: string
+  ): React.ReactNode => {
+    if (!highlights || highlights.length === 0 || !text) return text;
+    const lower = text.toLowerCase();
+    type Range = { start: number; end: number; spec: HighlightSpec };
+    const ranges: Range[] = [];
+    for (const h of highlights) {
+      if (!h || !h.match) continue;
+      const needle = String(h.match).toLowerCase();
+      if (!needle) continue;
+      let i = 0;
+      while (i <= lower.length) {
+        const at = lower.indexOf(needle, i);
+        if (at < 0) break;
+        ranges.push({ start: at, end: at + needle.length, spec: h });
+        i = at + Math.max(1, needle.length);
+      }
+    }
+    // Sort: earlier first; on tie, longer first.
+    ranges.sort((a, b) => {
+      if (a.start !== b.start) return a.start - b.start;
+      return (b.end - b.start) - (a.end - a.start);
+    });
+    const resolved: Range[] = [];
+    let cursor = 0;
+    for (const r of ranges) {
+      if (r.start < cursor) continue;
+      resolved.push(r);
+      cursor = r.end;
+    }
+    if (resolved.length === 0) return text;
+    const nodes: React.ReactNode[] = [];
+    cursor = 0;
+    resolved.forEach((r, idx) => {
+      if (r.start > cursor) {
+        nodes.push(text.slice(cursor, r.start));
+      }
+      const segment = text.slice(r.start, r.end);
+      const pillStyle: React.CSSProperties = {
+        background: r.spec.bgColor,
+        color: r.spec.textColor || baseColor,
+        padding: `2px ${r.spec.paddingX ?? 4}px`,
+        borderRadius: `${r.spec.borderRadius ?? 6}px`,
+        display: "inline",
+        // @ts-ignore - CSS fallback + webkit prefix
+        boxDecorationBreak: "clone",
+        WebkitBoxDecorationBreak: "clone",
+      };
+      nodes.push(
+        <span key={`hl-${idx}-${r.start}`} style={pillStyle}>
+          {segment}
+        </span>
+      );
+      cursor = r.end;
+    });
+    if (cursor < text.length) nodes.push(text.slice(cursor));
+    return nodes;
+  };
+
   const textStyle = (p: Record<string, any>): React.CSSProperties => ({
     fontFamily: `${FONT_VAR[p.fontFamily] || FONT_VAR["Inter"]}, sans-serif`,
     fontSize: `${p.fontSize || 48}px`,
@@ -313,7 +418,11 @@ export function Canvas({
   const commitTextEdit = (layerId: string, el: HTMLDivElement | null) => {
     if (!el) return;
     const newText = el.innerText.trim();
-    onUpdateLayerProps(layerId, { text: newText });
+    if (getTextLayer(layerId) && onUpdateTextLayer) {
+      onUpdateTextLayer(layerId, { text: newText });
+    } else {
+      onUpdateLayerProps(layerId, { text: newText });
+    }
     setEditingText(null);
   };
 
@@ -511,107 +620,235 @@ export function Canvas({
             );
           })()}
 
-        {/* ── Text layers (headline + subtitle) ────────────────────────
-            Canva-style text boxes: each has an EXPLICIT fixed width
-            (logical pixels, saved per-layer as `w`). Dragging moves the
-            box's center; it never changes the box's width or how the
-            text wraps inside. Resize handle on the right edge drags
-            the box's width (not font size). Font size is controlled
-            separately in the properties panel. */}
-        {[headlineLayer, subtitleLayer].map((layer) => {
-          if (!layer?.visible) return null;
-          const isHeadline = layer === headlineLayer;
-          const layerId = isHeadline ? "headline" : "subtitle";
-          const p = layer.props;
-          const isEditing = editingText === layerId;
-          const style = textStyle(p);
-          // Default text-box width is 85% of the canvas. Users can
-          // resize via the edge handle; the value persists in the
-          // layer's `w` prop so moving never reflows the text.
-          const boxW = Math.max(60, Math.min(CANVAS_W - 8, p.w ?? CANVAS_W * 0.85));
+        {/* ── Text layers ──────────────────────────────────────────────
+            Two modes:
+            1. Dynamic: render every entry from `textLayers`. Legacy
+               headline/subtitle layers are skipped in this mode.
+            2. Legacy: render the fixed headline + subtitle layers
+               that live inside the `layers` array.
 
-          return (
-            <div
-              key={`${layerId}-${p.fontFamily || 'Inter'}`}
-              onMouseDown={(e) => {
-                if (isEditing) return;
-                startDrag(e, layerId, "move");
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelectLayer(layerId);
-              }}
-              onDoubleClick={(e) => {
-                e.stopPropagation();
-                onSelectLayer(layerId);
-                setEditingText(layerId);
-              }}
-              className="absolute z-30"
-              style={{
-                left: `${p.x ?? 50}%`,
-                top: `${p.y ?? (isHeadline ? 68 : 80)}%`,
-                transform: "translate(-50%, -50%)",
-                width: boxW,
-                cursor: isEditing
-                  ? "text"
-                  : drag?.id === layerId
-                    ? "grabbing"
-                    : "grab",
-              }}
-            >
-              <div
-                contentEditable={isEditing}
-                suppressContentEditableWarning
-                onBlur={(e) => commitTextEdit(layerId, e.currentTarget)}
-                onKeyDown={(e) => handleTextKeyDown(e, layerId)}
-                style={{
-                  ...style,
-                  padding: "4px 8px",
-                  borderRadius: 4,
-                  border: isSel(layerId)
-                    ? isEditing
-                      ? "1px solid #58a6ff"
-                      : "1px dashed #58a6ff"
-                    : "1px dashed transparent",
-                  background: isSel(layerId) ? "rgba(88,166,255,0.06)" : "transparent",
-                  outline: "none",
-                  // block-level, full width of the parent box — text
-                  // wraps within `boxW` regardless of position.
-                  width: "100%",
-                  boxSizing: "border-box",
-                  wordBreak: "break-word",
-                }}
-                ref={(el) => {
-                  if (el && isEditing && document.activeElement !== el) {
-                    el.focus();
-                    const range = document.createRange();
-                    range.selectNodeContents(el);
-                    const sel = window.getSelection();
-                    sel?.removeAllRanges();
-                    sel?.addRange(range);
-                  }
-                }}
-              >
-                {p.text || (isHeadline ? "Headline" : "Subtitle")}
-              </div>
-              {isSel(layerId) && !isEditing && (
-                <>
-                  {/* Width resize handles on the left + right edges */}
+            Canva-style text boxes: each has a width expressed as a
+            percentage of the canvas in dynamic mode, or logical pixels
+            in legacy mode. Dragging moves the box's center; it never
+            changes the box's width or how the text wraps inside. The
+            edge handles resize the width. */}
+        {useDynamicText
+          ? textLayers!.map((t) => {
+              const visible = textLayerVisibility
+                ? textLayerVisibility[t.id] !== false
+                : true;
+              if (!visible) return null;
+              const layerId = t.id;
+              const isEditing = editingText === layerId;
+              const p: Record<string, any> = {
+                fontFamily: t.fontFamily,
+                fontSize: t.fontSize,
+                fontWeight: t.fontWeight,
+                color: t.color,
+                alignment: t.alignment,
+                letterSpacing: t.letterSpacing,
+                textTransform: t.textTransform,
+                opacity: t.opacity,
+                shadowEnabled: t.shadowEnabled,
+                shadowColor: t.shadowColor,
+                shadowBlur: t.shadowBlur,
+                shadowX: t.shadowX,
+                shadowY: t.shadowY,
+                strokeEnabled: t.strokeEnabled,
+                strokeColor: t.strokeColor,
+                strokeWidth: t.strokeWidth,
+              };
+              const style = textStyle(p);
+              const widthPct =
+                typeof t.width === "number" ? t.width : 85;
+              const boxW = Math.max(
+                60,
+                Math.min(CANVAS_W - 8, (widthPct / 100) * CANVAS_W)
+              );
+              const anchorTransform =
+                t.anchor === "top-left" ? "translate(0, 0)" : "translate(-50%, -50%)";
+
+              return (
+                <div
+                  key={`${layerId}-${t.fontFamily}`}
+                  onMouseDown={(e) => {
+                    if (isEditing) return;
+                    startDrag(e, layerId, "move");
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectLayer(layerId);
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    onSelectLayer(layerId);
+                    setEditingText(layerId);
+                  }}
+                  className="absolute z-30"
+                  style={{
+                    left: `${t.x}%`,
+                    top: `${t.y}%`,
+                    transform: anchorTransform,
+                    width: boxW,
+                    cursor: isEditing
+                      ? "text"
+                      : drag?.id === layerId
+                        ? "grabbing"
+                        : "grab",
+                  }}
+                >
                   <div
-                    onMouseDown={(e) => startDrag(e, layerId, "l")}
-                    className="absolute top-1/2 -translate-y-1/2 -left-1.5 w-3 h-6 bg-[#58a6ff] rounded cursor-ew-resize border-2 border-[#0d1117]"
-                    title="Drag to resize box width"
-                  />
+                    contentEditable={isEditing}
+                    suppressContentEditableWarning
+                    onBlur={(e) => commitTextEdit(layerId, e.currentTarget)}
+                    onKeyDown={(e) => handleTextKeyDown(e, layerId)}
+                    style={{
+                      ...style,
+                      padding: "4px 8px",
+                      borderRadius: 4,
+                      border: isSel(layerId)
+                        ? isEditing
+                          ? "1px solid #58a6ff"
+                          : "1px dashed #58a6ff"
+                        : "1px dashed transparent",
+                      background: isSel(layerId)
+                        ? "rgba(88,166,255,0.06)"
+                        : "transparent",
+                      outline: "none",
+                      width: "100%",
+                      boxSizing: "border-box",
+                      wordBreak: "break-word",
+                    }}
+                    ref={(el) => {
+                      if (el && isEditing && document.activeElement !== el) {
+                        el.focus();
+                        const range = document.createRange();
+                        range.selectNodeContents(el);
+                        const sel = window.getSelection();
+                        sel?.removeAllRanges();
+                        sel?.addRange(range);
+                      }
+                    }}
+                  >
+                    {isEditing
+                      ? t.text || `Text (${t.role})`
+                      : renderTextWithHighlights(
+                          t.text || `Text (${t.role})`,
+                          t.highlights,
+                          t.color || "#FFFFFF"
+                        )}
+                  </div>
+                  {isSel(layerId) && !isEditing && (
+                    <>
+                      <div
+                        onMouseDown={(e) => startDrag(e, layerId, "l")}
+                        className="absolute top-1/2 -translate-y-1/2 -left-1.5 w-3 h-6 bg-[#58a6ff] rounded cursor-ew-resize border-2 border-[#0d1117]"
+                        title="Drag to resize box width"
+                      />
+                      <div
+                        onMouseDown={(e) => startDrag(e, layerId, "r")}
+                        className="absolute top-1/2 -translate-y-1/2 -right-1.5 w-3 h-6 bg-[#58a6ff] rounded cursor-ew-resize border-2 border-[#0d1117]"
+                        title="Drag to resize box width"
+                      />
+                    </>
+                  )}
+                </div>
+              );
+            })
+          : [headlineLayer, subtitleLayer].map((layer) => {
+              if (!layer?.visible) return null;
+              const isHeadline = layer === headlineLayer;
+              const layerId = isHeadline ? "headline" : "subtitle";
+              const p = layer.props;
+              const isEditing = editingText === layerId;
+              const style = textStyle(p);
+              // Default text-box width is 85% of the canvas. Users can
+              // resize via the edge handle; the value persists in the
+              // layer's `w` prop so moving never reflows the text.
+              const boxW = Math.max(60, Math.min(CANVAS_W - 8, p.w ?? CANVAS_W * 0.85));
+
+              return (
+                <div
+                  key={`${layerId}-${p.fontFamily || 'Inter'}`}
+                  onMouseDown={(e) => {
+                    if (isEditing) return;
+                    startDrag(e, layerId, "move");
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectLayer(layerId);
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    onSelectLayer(layerId);
+                    setEditingText(layerId);
+                  }}
+                  className="absolute z-30"
+                  style={{
+                    left: `${p.x ?? 50}%`,
+                    top: `${p.y ?? (isHeadline ? 68 : 80)}%`,
+                    transform: "translate(-50%, -50%)",
+                    width: boxW,
+                    cursor: isEditing
+                      ? "text"
+                      : drag?.id === layerId
+                        ? "grabbing"
+                        : "grab",
+                  }}
+                >
                   <div
-                    onMouseDown={(e) => startDrag(e, layerId, "r")}
-                    className="absolute top-1/2 -translate-y-1/2 -right-1.5 w-3 h-6 bg-[#58a6ff] rounded cursor-ew-resize border-2 border-[#0d1117]"
-                    title="Drag to resize box width"
-                  />
-                </>
-              )}
-            </div>
-          );
-        })}
+                    contentEditable={isEditing}
+                    suppressContentEditableWarning
+                    onBlur={(e) => commitTextEdit(layerId, e.currentTarget)}
+                    onKeyDown={(e) => handleTextKeyDown(e, layerId)}
+                    style={{
+                      ...style,
+                      padding: "4px 8px",
+                      borderRadius: 4,
+                      border: isSel(layerId)
+                        ? isEditing
+                          ? "1px solid #58a6ff"
+                          : "1px dashed #58a6ff"
+                        : "1px dashed transparent",
+                      background: isSel(layerId) ? "rgba(88,166,255,0.06)" : "transparent",
+                      outline: "none",
+                      // block-level, full width of the parent box — text
+                      // wraps within `boxW` regardless of position.
+                      width: "100%",
+                      boxSizing: "border-box",
+                      wordBreak: "break-word",
+                    }}
+                    ref={(el) => {
+                      if (el && isEditing && document.activeElement !== el) {
+                        el.focus();
+                        const range = document.createRange();
+                        range.selectNodeContents(el);
+                        const sel = window.getSelection();
+                        sel?.removeAllRanges();
+                        sel?.addRange(range);
+                      }
+                    }}
+                  >
+                    {p.text || (isHeadline ? "Headline" : "Subtitle")}
+                  </div>
+                  {isSel(layerId) && !isEditing && (
+                    <>
+                      {/* Width resize handles on the left + right edges */}
+                      <div
+                        onMouseDown={(e) => startDrag(e, layerId, "l")}
+                        className="absolute top-1/2 -translate-y-1/2 -left-1.5 w-3 h-6 bg-[#58a6ff] rounded cursor-ew-resize border-2 border-[#0d1117]"
+                        title="Drag to resize box width"
+                      />
+                      <div
+                        onMouseDown={(e) => startDrag(e, layerId, "r")}
+                        className="absolute top-1/2 -translate-y-1/2 -right-1.5 w-3 h-6 bg-[#58a6ff] rounded cursor-ew-resize border-2 border-[#0d1117]"
+                        title="Drag to resize box width"
+                      />
+                    </>
+                  )}
+                </div>
+              );
+            })}
 
         {/* ── Alignment guides (Canva-style) ───────────────────────
             Magenta dashed lines through the canvas center, only

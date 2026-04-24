@@ -29,6 +29,8 @@ app.conf.update(
         "tasks.analyze_page.*": {"queue": "queue.analyze"},
         "tasks.recommendation.*": {"queue": "queue.analyze"},
         "tasks.page_stats_snapshot.*": {"queue": "queue.analyze"},
+        "tasks.seed_default_template.*": {"queue": "queue.analyze"},
+        "tasks.publish_scheduled_reel.*": {"queue": "queue.publish"},
     },
     beat_schedule={
         # Keep the viral_reels pool fresh on every confirmed theme page.
@@ -56,6 +58,21 @@ app.conf.update(
             "schedule": crontab(minute=0, hour=6),
             "options": {"queue": "queue.analyze"},
         },
+        # Dispatch scheduled Instagram Reels whose time has come. Runs
+        # every minute so the wall-clock drift between scheduled_at and
+        # actual publish never exceeds ~60s.
+        "tick-scheduled-reels": {
+            "task": "tasks.publish_scheduled_reel.tick_scheduled_reels",
+            "schedule": crontab(minute="*"),
+            "options": {"queue": "queue.publish"},
+        },
+        # Reconcile reels stuck in 'processing' (worker crash, lost poll,
+        # etc.) against Meta's container state so rows don't dangle.
+        "cleanup-stuck-publishes": {
+            "task": "tasks.publish_scheduled_reel.cleanup_stuck_processing",
+            "schedule": crontab(minute="*/15"),
+            "options": {"queue": "queue.publish"},
+        },
     },
 )
 
@@ -70,3 +87,5 @@ import tasks.analyze_page  # noqa: F401, E402
 import tasks.recommendation  # noqa: F401, E402
 import tasks.page_stats_snapshot  # noqa: F401, E402
 import tasks.deep_discovery  # noqa: F401, E402
+import tasks.seed_default_template  # noqa: F401, E402
+import tasks.publish_scheduled_reel  # noqa: F401, E402

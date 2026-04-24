@@ -58,6 +58,16 @@ services:
         sync: false
       - key: CORS_ORIGINS
         sync: false
+      - key: META_APP_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_OAUTH_REDIRECT_URI
+        sync: false
+      - key: META_GRAPH_VERSION
+        value: v25.0
+      - key: IG_TOKEN_ENC_KEY
+        sync: false
 
   # ── Web Frontend ───────────────────────────────────────────
   - type: web
@@ -155,7 +165,7 @@ services:
     plan: standard
     dockerfilePath: ./services/worker/Dockerfile
     dockerContext: ./services/worker
-    dockerCommand: celery -A celery_app worker -Q queue.enhance,queue.export -c 2 -E --loglevel=info
+    dockerCommand: celery -A celery_app worker -Q queue.enhance,queue.export,queue.publish -c 2 -E --loglevel=info
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -174,6 +184,14 @@ services:
         sync: false
       - key: MINIO_SECURE
         value: "false"
+      - key: META_APP_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_GRAPH_VERSION
+        value: v25.0
+      - key: IG_TOKEN_ENC_KEY
+        sync: false
 
   # ── Celery Beat (Scheduler) ────────────────────────────────
   - type: worker

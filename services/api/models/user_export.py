@@ -19,6 +19,10 @@ class UserExport(UUIDMixin, Base):
     headline_style: Mapped[dict] = mapped_column(JSONB, default=dict)
     subtitle_text: Mapped[str] = mapped_column(Text, nullable=False)
     subtitle_style: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # Per-export overrides for the multi-layer text system. When NULL or
+    # empty, the exporter falls back to the parent template's text_layers,
+    # and if that is also empty, to the legacy headline/subtitle fields.
+    text_layers_overrides: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     caption_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     video_transform: Mapped[dict] = mapped_column(JSONB, default=dict)
     video_trim: Mapped[dict] = mapped_column(JSONB, default=dict)

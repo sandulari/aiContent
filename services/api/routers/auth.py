@@ -96,6 +96,14 @@ async def register(body: UserCreate, response: Response, db: AsyncSession = Depe
 
     payload = await _issue_tokens(user, db, response)
 
+    # Seed the AiModernTimes default template so the editor is never empty.
+    # Non-blocking: registration succeeds even if Celery is unreachable.
+    try:
+        from celery_client import trigger_seed_default_template
+        trigger_seed_default_template(user.id)
+    except Exception:
+        logger.warning("Default-template seed failed to queue for %s — continuing", user.email, exc_info=True)
+
     # Send welcome email (non-blocking — registration succeeds even if email fails)
     try:
         subject, html = welcome_email(user.display_name or user.email)

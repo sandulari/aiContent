@@ -18,6 +18,11 @@ class UserTemplate(UUIDMixin, Base):
     logo_position: Mapped[dict] = mapped_column(JSONB, default=dict)
     headline_defaults: Mapped[dict] = mapped_column(JSONB, default=dict)
     subtitle_defaults: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # Multi-layer text support. Each element is a layer dict matching the
+    # schema documented in services/worker/lib/video_proc.py. When empty,
+    # the renderer falls back to headline_defaults + subtitle_defaults so
+    # legacy templates keep working unchanged.
+    text_layers: Mapped[list] = mapped_column(JSONB, default=list)
     background_color: Mapped[str] = mapped_column(String(20), default="#000000")
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, server_default=func.now())

@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { api, UserExport } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { usePolling } from "@/hooks/use-polling";
+import { ScheduleButton } from "@/components/scheduler/ScheduleButton";
 
 export default function LibraryPage() {
   const router = useRouter();
@@ -59,10 +60,17 @@ export default function LibraryPage() {
                   <span>{formatDate(exp.created_at)}</span>
                   <span className="capitalize">{exp.export_status}</span>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <Button size="sm" className="flex-1" variant="ghost" onClick={() => router.push(`/editor/${exp.id}`)}>Edit</Button>
                   {(exp.export_status === "done" || exp.export_status === "completed") && exp.export_minio_key && (
-                    <Button size="sm" variant="secondary" onClick={() => window.open(api.exports.downloadUrl(exp.id), "_blank")}>Download</Button>
+                    <>
+                      <Button size="sm" variant="secondary" onClick={() => window.open(api.exports.downloadUrl(exp.id), "_blank")}>Download</Button>
+                      <ScheduleButton
+                        exportId={exp.id}
+                        disabled={exp.export_status !== "done" || !exp.export_minio_key}
+                        onScheduled={() => router.push("/scheduled")}
+                      />
+                    </>
                   )}
                   <Button size="sm" variant="danger" loading={deletingId === exp.id} onClick={async () => {
                     if (!confirm("Delete this export? This cannot be undone.")) return;

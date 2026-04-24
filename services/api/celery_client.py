@@ -50,3 +50,7 @@ def trigger_generate_recommendations(page_id: UUID) -> str:
 def trigger_deep_discovery(page_id: UUID) -> str:
     r = celery_app.send_task("tasks.deep_discovery.deep_discovery_task", args=[str(page_id)], queue="queue.discover")
     return r.id
+
+def trigger_seed_default_template(user_id: UUID) -> str:
+    r = celery_app.send_task("tasks.seed_default_template.seed_for_user", args=[str(user_id)], queue="queue.analyze")
+    return r.id

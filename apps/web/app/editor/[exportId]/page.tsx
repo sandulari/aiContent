@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Loading } from "@/components/shared/loading";
 import { SkeletonEditor } from "@/components/shared/skeleton";
-import { api, UserExport, Template } from "@/lib/api";
+import { api, UserExport, Template, TextLayer } from "@/lib/api";
 import { Canvas } from "@/components/editor/Canvas";
 import { LayersPanel } from "@/components/editor/LayersPanel";
 import { PropertiesPanel } from "@/components/editor/PropertiesPanel";
@@ -98,7 +98,94 @@ export default function EditorPage() {
     setDirty(true);
   }, []);
 
+  // ── Dynamic text layers ────────────────────────────────────────────
+  // Per-TextLayer state that, when non-empty, overrides the legacy
+  // headline+subtitle rendering. Each layer has its own uuid so the
+  // user can add/delete/reorder freely. Visibility is tracked in a
+  // parallel map so we don't mutate the schema-validated TextLayer
+  // objects.
+  const [textLayers, setTextLayers] = useState<TextLayer[]>([]);
+  const [textLayerVisibility, setTextLayerVisibility] = useState<Record<string, boolean>>({});
+
+  const makeNewTextLayer = (): TextLayer => ({
+    id: crypto.randomUUID(),
+    role: "custom",
+    text: "",
+    x: 50,
+    y: 50,
+    width: 85,
+    fontFamily: "Inter",
+    fontSize: 48,
+    fontWeight: 700,
+    color: "#FFFFFF",
+    alignment: "center",
+    letterSpacing: 0,
+    textTransform: "none",
+    shadowEnabled: false,
+    shadowColor: "#000000",
+    shadowBlur: 6,
+    shadowX: 0,
+    shadowY: 2,
+    strokeEnabled: false,
+    strokeColor: "#000000",
+    strokeWidth: 2,
+    opacity: 100,
+    anchor: "center",
+  });
+
+  const addTextLayer = useCallback(() => {
+    const t = makeNewTextLayer();
+    setTextLayers((prev) => [...prev, t]);
+    setTextLayerVisibility((prev) => ({ ...prev, [t.id]: true }));
+    setSelectedLayerId(t.id);
+    setDirty(true);
+  }, []);
+
+  const deleteTextLayer = useCallback((id: string) => {
+    setTextLayers((prev) => prev.filter((t) => t.id !== id));
+    setTextLayerVisibility((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setSelectedLayerId((cur) => (cur === id ? null : cur));
+    setDirty(true);
+  }, []);
+
+  const moveTextLayer = useCallback((id: string, direction: "up" | "down") => {
+    setTextLayers((prev) => {
+      const idx = prev.findIndex((t) => t.id === id);
+      if (idx < 0) return prev;
+      const swap = direction === "up" ? idx - 1 : idx + 1;
+      if (swap < 0 || swap >= prev.length) return prev;
+      const next = prev.slice();
+      [next[idx], next[swap]] = [next[swap], next[idx]];
+      return next;
+    });
+    setDirty(true);
+  }, []);
+
+  const updateTextLayer = useCallback(
+    (id: string, partial: Partial<TextLayer>) => {
+      setTextLayers((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, ...partial } : t))
+      );
+      setDirty(true);
+    },
+    []
+  );
+
   const toggleVisibility = (id: string) => {
+    // Dynamic text layers live outside `layers` — route visibility
+    // toggles for them through the parallel map.
+    if (textLayers.some((t) => t.id === id)) {
+      setTextLayerVisibility((prev) => ({
+        ...prev,
+        [id]: !(prev[id] !== false),
+      }));
+      setDirty(true);
+      return;
+    }
     setLayers((prev) => prev.map((l) => l.id === id ? { ...l, visible: !l.visible } : l));
     setDirty(true);
   };
@@ -124,6 +211,18 @@ export default function EditorPage() {
       }
       if ((data as any).logo_overrides && typeof (data as any).logo_overrides === "object") {
         updateLayerProps("logo", { ...(data as any).logo_overrides });
+      }
+      // Dynamic text layers: hydrate state from the backend. A null or
+      // empty array keeps us on the legacy headline+subtitle path; a
+      // non-empty list swaps into dynamic mode.
+      if (Array.isArray(data.text_layers_overrides) && data.text_layers_overrides.length > 0) {
+        setTextLayers(data.text_layers_overrides);
+        const vis: Record<string, boolean> = {};
+        for (const t of data.text_layers_overrides) vis[t.id] = true;
+        setTextLayerVisibility(vis);
+      } else {
+        setTextLayers([]);
+        setTextLayerVisibility({});
       }
       // Only apply a saved video_transform if the DB actually has one
       // (a non-empty object with real keys). Otherwise leave the layer
@@ -324,6 +423,10 @@ export default function EditorPage() {
           shape: lg.shape, objectFit: lg.objectFit,
           transparent: lg.transparent, backgroundColor: lg.backgroundColor,
         },
+        // Send the dynamic text layer list as-is. An empty array means
+        // "no dynamic overrides — use legacy headline+subtitle", which
+        // matches the backend's backwards-compat contract.
+        text_layers_overrides: textLayers,
       });
       setDirty(false);
       setSaveFeedback("success");
@@ -342,7 +445,7 @@ export default function EditorPage() {
       handleSave();
     }, 3000);
     return () => clearTimeout(timer);
-  }, [dirty, layers, trimStart, trimEnd, captionText, muted, volume, customAudioKey, customVolume, fadeIn, fadeOut]);
+  }, [dirty, layers, textLayers, textLayerVisibility, trimStart, trimEnd, captionText, muted, volume, customAudioKey, customVolume, fadeIn, fadeOut]);
 
   // beforeunload guard — warn if user closes tab with unsaved changes
   useEffect(() => {
@@ -362,7 +465,66 @@ export default function EditorPage() {
 
   if (loading) return <SkeletonEditor />;
 
-  const selectedLayer = selectedLayerId ? { id: selectedLayerId, type: selectedLayerId, props: getLayerProps(selectedLayerId) } : null;
+  // Resolve the selection against BOTH stores. Dynamic text layers
+  // live in `textLayers` keyed by uuid; everything else (video/logo
+  // /legacy headline/subtitle) lives in `layers` keyed by literal id.
+  // The PropertiesPanel routes by `type`, so we hand it the layer's
+  // `role` for dynamic layers and the literal id for legacy ones.
+  const selectedTextLayer = selectedLayerId
+    ? textLayers.find((t) => t.id === selectedLayerId)
+    : undefined;
+
+  const selectedLayer = selectedLayerId
+    ? selectedTextLayer
+      ? {
+          id: selectedTextLayer.id,
+          type: selectedTextLayer.role,
+          props: selectedTextLayer as unknown as Record<string, any>,
+        }
+      : { id: selectedLayerId, type: selectedLayerId, props: getLayerProps(selectedLayerId) }
+    : null;
+
+  // Unified prop-update callback for the PropertiesPanel: picks the
+  // right store based on whether the id matches a dynamic text layer.
+  const handleUpdateProps = (id: string, props: Record<string, any>) => {
+    if (textLayers.some((t) => t.id === id)) {
+      updateTextLayer(id, props as Partial<TextLayer>);
+    } else {
+      updateLayerProps(id, props);
+    }
+  };
+
+  // Layer list used by the LayersPanel for the static (non-text)
+  // entries. In dynamic mode we still include headline/subtitle
+  // entries here; LayersPanel will filter them out when textLayers is
+  // non-empty.
+  const layersForPanel = layers.map((l) => ({
+    id: l.id,
+    name: l.name,
+    type: l.type,
+    visible: l.visible,
+  }));
+
+  // Dynamic text layers mapped to the LayersPanel shape.
+  const dynamicTextLayersForPanel = textLayers.map((t) => {
+    const defaultName =
+      t.role === "headline"
+        ? "Headline"
+        : t.role === "subtitle"
+          ? "Subtitle"
+          : t.role === "handle"
+            ? "Handle"
+            : t.role === "account_name"
+              ? "Account"
+              : "Text";
+    const label = t.text ? t.text.slice(0, 24) : defaultName;
+    return {
+      id: t.id,
+      name: label,
+      type: t.role,
+      visible: textLayerVisibility[t.id] !== false,
+    };
+  });
 
   return (
     <div className="flex flex-col h-screen bg-[#0d1117] overflow-hidden">
@@ -434,10 +596,14 @@ export default function EditorPage() {
             <span className="text-[11px] font-medium text-[#8b949e] uppercase tracking-wider">Layers</span>
           </div>
           <LayersPanel
-            layers={layers.map((l) => ({ id: l.id, name: l.name, type: l.type, visible: l.visible }))}
+            layers={layersForPanel}
             selectedLayerId={selectedLayerId}
             onSelectLayer={handleSelectLayer}
             onToggleVisibility={toggleVisibility}
+            textLayers={dynamicTextLayersForPanel}
+            onAddTextLayer={addTextLayer}
+            onDeleteTextLayer={deleteTextLayer}
+            onMoveTextLayer={moveTextLayer}
           />
         </div>
 
@@ -463,6 +629,9 @@ export default function EditorPage() {
               videoRef={videoRef}
               onSelectLayer={handleSelectLayer}
               onUpdateLayerProps={updateLayerProps}
+              textLayers={textLayers}
+              textLayerVisibility={textLayerVisibility}
+              onUpdateTextLayer={updateTextLayer}
             />
           </div>
         </div>
@@ -472,13 +641,14 @@ export default function EditorPage() {
           <div className="px-3 py-2 border-b border-[#30363d]">
             <span className="text-[11px] font-medium text-[#8b949e] uppercase tracking-wider">Properties</span>
           </div>
-          {/* Inline text editing */}
-          {selectedLayer && (selectedLayer.type === "headline" || selectedLayer.type === "subtitle") && (
+          {/* Inline text editing — works for both legacy headline/subtitle
+              and dynamic text layers (headline/subtitle/handle/account_name/custom). */}
+          {selectedLayer && ["headline", "subtitle", "handle", "account_name", "custom"].includes(selectedLayer.type) && (
             <div className="px-3 py-2 border-b border-[#30363d]">
               <label className="text-[11px] text-[#8b949e] mb-1 block">Text Content</label>
               <textarea
                 value={selectedLayer.props.text || ""}
-                onChange={(e) => updateLayerProps(selectedLayer.id, { text: e.target.value })}
+                onChange={(e) => handleUpdateProps(selectedLayer.id, { text: e.target.value })}
                 rows={2}
                 className="w-full bg-[#0d1117] border border-[#30363d] rounded px-2 py-1.5 text-sm text-[#c9d1d9] focus:border-[#58a6ff] focus:outline-none resize-none"
               />
@@ -522,7 +692,7 @@ export default function EditorPage() {
           )}
           <PropertiesPanel
             selectedLayer={selectedLayer}
-            onUpdateProps={updateLayerProps}
+            onUpdateProps={handleUpdateProps}
           />
         </div>
       </div>

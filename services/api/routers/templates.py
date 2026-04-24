@@ -83,6 +83,10 @@ class TemplateCreateRequest(BaseModel):
     logo_position: Dict[str, Any] | None = None
     headline_defaults: Dict[str, Any] | None = None
     subtitle_defaults: Dict[str, Any] | None = None
+    # Optional: multi-layer text definitions. When provided, overrides
+    # the default of a headline+subtitle pair. See video_proc.py for
+    # per-layer schema.
+    text_layers: List[Dict[str, Any]] | None = None
     background_color: str = Field(default="#000000", max_length=20)
 
 
@@ -91,6 +95,7 @@ class TemplateUpdateRequest(BaseModel):
     logo_position: Dict[str, Any] | None = None
     headline_defaults: Dict[str, Any] | None = None
     subtitle_defaults: Dict[str, Any] | None = None
+    text_layers: List[Dict[str, Any]] | None = None
     background_color: str | None = Field(default=None, max_length=20)
     is_default: bool | None = None
 
@@ -123,6 +128,7 @@ async def create_template(body: TemplateCreateRequest, current_user: User = Depe
         logo_position=body.logo_position or DEFAULT_LOGO,
         headline_defaults=body.headline_defaults or DEFAULT_HEADLINE,
         subtitle_defaults=body.subtitle_defaults or DEFAULT_SUBTITLE,
+        text_layers=body.text_layers if body.text_layers is not None else [],
         background_color=body.background_color,
         is_default=is_first,
     )
@@ -259,6 +265,7 @@ def _tpl_dict(t: UserTemplate) -> dict:
         "id": str(t.id), "user_id": str(t.user_id), "template_name": t.template_name,
         "logo_minio_key": t.logo_minio_key, "logo_position": t.logo_position,
         "headline_defaults": t.headline_defaults, "subtitle_defaults": t.subtitle_defaults,
+        "text_layers": t.text_layers or [],
         "background_color": t.background_color, "is_default": t.is_default,
         "created_at": str(t.created_at), "updated_at": str(t.updated_at),
     }

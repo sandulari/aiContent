@@ -17,6 +17,7 @@ from models.discovery_run import DiscoveryRun
 from models.job import Job
 from models.user_page_reel import UserPageReel
 from models.reel_profile import ReelProfile
+from models.scheduled_reel import ScheduledReel
 
 __all__ = [
     "Base", "UUIDMixin",
@@ -27,4 +28,5 @@ __all__ = [
     "UserTemplate", "UserExport",
     "AITextGeneration", "DiscoveryRun", "Job",
     "UserPageReel", "ReelProfile",
+    "ScheduledReel",
 ]

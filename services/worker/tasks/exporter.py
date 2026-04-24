@@ -69,7 +69,7 @@ def export_video_task(self, export_id: str):
                         ue.headline_style, ue.subtitle_style,
                         ue.video_transform, ue.video_trim, ue.audio_config,
                         ue.logo_overrides, ue.logo_override_key, ue.export_status,
-                        ue.export_minio_key
+                        ue.export_minio_key, ue.text_layers_overrides
                     FROM user_exports ue
                     WHERE ue.id = :id
                     """
@@ -124,22 +124,26 @@ def export_video_task(self, export_id: str):
         # were silently dropped in the original implementation.
         logo_src_path = None
         resolved_logo_key: str | None = None
+        template_text_layers = None
 
-        if export_row.logo_override_key:
-            resolved_logo_key = export_row.logo_override_key
-        elif export_row.template_id:
+        if export_row.template_id:
             with get_session() as session:
                 tmpl_row = session.execute(
                     text(
                         """
-                        SELECT logo_minio_key FROM user_templates
+                        SELECT logo_minio_key, text_layers FROM user_templates
                         WHERE id = :id
                         """
                     ),
                     {"id": str(export_row.template_id)},
                 ).fetchone()
-            if tmpl_row and tmpl_row.logo_minio_key:
-                resolved_logo_key = tmpl_row.logo_minio_key
+            if tmpl_row:
+                template_text_layers = _parse_jsonb(tmpl_row.text_layers)
+                if not export_row.logo_override_key and tmpl_row.logo_minio_key:
+                    resolved_logo_key = tmpl_row.logo_minio_key
+
+        if export_row.logo_override_key:
+            resolved_logo_key = export_row.logo_override_key
 
         if resolved_logo_key:
             key_parts = resolved_logo_key.split("/", 1)
@@ -186,6 +190,8 @@ def export_video_task(self, export_id: str):
             "template_id": str(export_row.template_id) if export_row.template_id else None,
             "logo_src_path": logo_src_path,
             "custom_audio_path": custom_audio_path,
+            "text_layers_overrides": _parse_jsonb(export_row.text_layers_overrides),
+            "template_text_layers": template_text_layers,
         }
 
         output_path = export_user_video(local_video_path, export_config)

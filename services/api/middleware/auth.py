@@ -8,6 +8,10 @@ from uuid import UUID
 
 from jose import jwt, JWTError
 from fastapi import Depends, HTTPException, Request, Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db.session import get_db
 
 JWT_SECRET = os.getenv("JWT_SECRET")
 if not JWT_SECRET:
@@ -138,15 +142,24 @@ def clear_auth_cookies(response: Response):
 # Auth dependency — reads from httpOnly cookie (or ?token= query param fallback)
 # ---------------------------------------------------------------------------
 
-async def get_current_user(request: Request, db=None):
+async def get_current_user(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """Extract the current user from the access_token httpOnly cookie.
 
     Falls back to a ``?token=`` query param so browser-initiated downloads
     (window.open) still work.
+
+    Uses the request-scoped DB session from ``Depends(get_db)``. FastAPI
+    caches dependencies per-request, so a router that also declares
+    ``db: AsyncSession = Depends(get_db)`` shares the same session — one
+    pool connection per authenticated request instead of two.
     """
+    from models.user import User
+
     token = request.cookies.get("access_token")
     if not token:
-        # Fallback: ?token= query param (used by download endpoints)
         token = request.query_params.get("token")
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -156,18 +169,8 @@ async def get_current_user(request: Request, db=None):
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    from db.session import get_db as _get_db, async_session
-    from models.user import User
-    from sqlalchemy import select
-
-    if db is None:
-        async with async_session() as session:
-            result = await session.execute(select(User).where(User.id == UUID(user_id)))
-            user = result.scalar_one_or_none()
-    else:
-        result = await db.execute(select(User).where(User.id == UUID(user_id)))
-        user = result.scalar_one_or_none()
-
+    result = await db.execute(select(User).where(User.id == UUID(user_id)))
+    user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return user

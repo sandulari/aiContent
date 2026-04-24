@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -82,6 +83,25 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-xl font-semibold text-[#e6edf3]">Settings</h1>
         <p className="text-sm text-[#484f58] mt-1">Manage your connected Instagram pages</p>
+      </div>
+
+      {/* Instagram publishing */}
+      <div>
+        <h2 className="text-sm font-medium text-[#e6edf3] mb-3">Instagram publishing</h2>
+        <Card>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm text-[#e6edf3]">Connect your Instagram account to schedule + publish reels directly from here.</p>
+              <p className="text-[11px] text-[#484f58] mt-1">Business or Creator IG accounts only. Managed separately from the pages below.</p>
+            </div>
+            <Link
+              href="/settings/instagram"
+              className="shrink-0 text-xs font-medium text-[#58a6ff] hover:underline"
+            >
+              Manage →
+            </Link>
+          </div>
+        </Card>
       </div>
 
       {/* Add page form */}

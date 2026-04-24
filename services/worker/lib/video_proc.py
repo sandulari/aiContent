@@ -297,6 +297,28 @@ def enhance_video(input_path: str, video_id: str) -> str:
 #   audio_config    = {muted, original_volume, custom_audio_key, custom_volume,
 #                      fade_in, fade_out}
 #
+# Multi-layer text support (additive, backwards-compatible):
+#   text_layers_overrides       -- per-export list of layer dicts (wins if non-empty)
+#   template_text_layers        -- template's default list (fallback)
+#   When neither is set, we fall back to the headline/subtitle pair above.
+#
+# Each layer dict:
+#   { id: str,
+#     role: "headline"|"subtitle"|"handle"|"account_name"|"custom",
+#     text: str,
+#     x: 0-100 (% of canvas width),
+#     y: 0-100 (% of canvas height),
+#     width?: 0-100 (% of canvas width, optional; default 85%),
+#     fontFamily, fontSize, fontWeight,
+#     color (hex),
+#     alignment: "left"|"center"|"right",
+#     letterSpacing, textTransform,
+#     shadowEnabled, shadowColor, shadowBlur, shadowX, shadowY,
+#     strokeEnabled, strokeColor, strokeWidth,
+#     opacity (0-100),
+#     anchor: "center"|"top-left" (default "center") }
+# Positions are percentages of the 1080×1920 export canvas.
+#
 # Text + logo are pre-rendered with Pillow to transparent PNGs sized
 # 1080×1920 so FFmpeg just overlays them with a single filter, which
 # gives us exact styling control (shadow, stroke, shape mask, object fit)
@@ -698,6 +720,420 @@ def _render_text_layer_png(text: str, style: dict, out_path: str) -> bool:
     return True
 
 
+def _find_highlight_matches(line: str, highlights: list[dict]) -> list[tuple[int, int, dict]]:
+    """Find every occurrence of each highlight phrase inside `line`.
+
+    Case-insensitive, preserves original casing in the source.
+    Returns a list of (start_index, end_index_exclusive, highlight_spec),
+    already sorted by start, with overlaps resolved by keeping the match
+    that starts earlier (and, on tie, the longer one). Non-overlapping
+    after resolution.
+    """
+    if not line or not highlights:
+        return []
+    line_lower = line.lower()
+    raw: list[tuple[int, int, dict]] = []
+    for h in highlights:
+        if not isinstance(h, dict):
+            continue
+        phrase = h.get("match") or ""
+        if not phrase:
+            continue
+        needle = str(phrase).lower()
+        if not needle:
+            continue
+        start = 0
+        while True:
+            idx = line_lower.find(needle, start)
+            if idx < 0:
+                break
+            raw.append((idx, idx + len(needle), h))
+            start = idx + max(1, len(needle))
+    # Sort by start asc, longer match first so it wins on equal start.
+    raw.sort(key=lambda t: (t[0], -(t[1] - t[0])))
+    resolved: list[tuple[int, int, dict]] = []
+    cursor = 0
+    for s, e, h in raw:
+        if s < cursor:
+            continue  # overlaps a previously-kept match
+        resolved.append((s, e, h))
+        cursor = e
+    return resolved
+
+
+def _render_text_layer_with_highlights_png(
+    text: str,
+    style: dict,
+    highlights: list[dict],
+    out_path: str,
+) -> bool:
+    """Render a text layer with background pills behind matched phrases.
+
+    Mirrors the layout of `_render_text_layer_png` exactly (wrap, padding,
+    alignment, shadow, stroke, anchor composite) and additionally:
+      * Draws a rounded-rect pill behind each occurrence of every
+        highlight `match` phrase (case-insensitive).
+      * If a match wraps across lines, each visual line segment gets its
+        own pill — pills never span a line break.
+      * If `textColor` is set on a highlight, that substring is rendered
+        in that color; otherwise it falls back to the layer's `color`.
+    """
+    if not text or not text.strip():
+        return False
+    try:
+        from PIL import Image, ImageDraw, ImageFont, ImageFilter  # local import
+    except Exception as exc:
+        logger.warning("Pillow unavailable, skipping text layer: %s", exc)
+        return False
+
+    s = style or {}
+    text_rendered = _apply_text_transform(text, s)
+
+    try:
+        font_size_editor = int(s.get("fontSize") or 48)
+    except Exception:
+        font_size_editor = 48
+    font_size = max(8, int(font_size_editor * _PX_SCALE_X))
+
+    weight = int(s.get("fontWeight") or 700)
+    family = s.get("fontFamily") or "Inter"
+
+    try:
+        font_path = _resolve_font(family, weight)
+        font = ImageFont.truetype(font_path, font_size)
+    except Exception as exc:
+        logger.warning("font resolve failed (%s %s): %s", family, weight, exc)
+        return False
+
+    opacity = max(0, min(100, int(s.get("opacity", 100))))
+    alpha = int(round(opacity / 100 * 255))
+    base_color = _hex_to_rgba(s.get("color") or "#FFFFFF", alpha)
+    alignment = (s.get("alignment") or "center").lower()
+
+    # Apply textTransform to highlight phrases too so matches still land
+    # when the layer is uppercase/lowercase.
+    h_specs: list[dict] = []
+    for h in highlights or []:
+        if not isinstance(h, dict):
+            continue
+        phrase_raw = h.get("match") or ""
+        if not phrase_raw:
+            continue
+        phrase = _apply_text_transform(str(phrase_raw), s)
+        h_specs.append({**h, "match": phrase})
+
+    box_w_editor = float(s.get("w") or (_EDITOR_W * 0.85))
+    box_w_px = max(60, int(box_w_editor * _PX_SCALE_X))
+
+    _probe = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    probe_draw = ImageDraw.Draw(_probe)
+
+    pad_x = int(_TEXT_PAD_X_EDITOR * _PX_SCALE_X)
+    pad_y = max(_TEXT_PAD_Y_EXPORT_MIN, int(font_size * 0.4))
+
+    content_w = max(20, box_w_px - pad_x * 2)
+    lines = _wrap_text_to_width(text_rendered, font, content_w, probe_draw)
+
+    try:
+        ascent, descent = font.getmetrics()
+        line_height = int((ascent + descent) * 1.15)
+    except Exception:
+        ascent, descent = font_size, int(font_size * 0.25)
+        line_height = int(font_size * 1.2)
+
+    # Measure line widths.
+    line_widths: list[int] = []
+    for line in lines:
+        try:
+            bb = probe_draw.textbbox((0, 0), line, font=font)
+            lw = bb[2] - bb[0]
+        except Exception:
+            lw = len(line) * font_size // 2
+        line_widths.append(lw)
+
+    layer_w = box_w_px
+    layer_h = pad_y * 2 + line_height * len(lines)
+
+    text_layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(text_layer)
+
+    stroke_enabled = bool(s.get("strokeEnabled"))
+    stroke_w = int(s.get("strokeWidth") or 0) if stroke_enabled else 0
+    stroke_color = _hex_to_rgba(s.get("strokeColor") or "#000000", alpha) if stroke_enabled else None
+
+    def _line_x(line_w: int) -> int:
+        if alignment == "left":
+            return pad_x
+        if alignment == "right":
+            return layer_w - pad_x - line_w
+        return (layer_w - line_w) // 2  # center
+
+    # Per-highlight pill padding in px (scaled from editor coords).
+    # paddingX/borderRadius are in editor (360-wide) pixels, same
+    # convention as the front-end preview, so scale 3x for 1080.
+    def _pill_pad_x(spec: dict) -> int:
+        try:
+            v = int(spec.get("paddingX", 4))
+        except Exception:
+            v = 4
+        return max(0, int(v * _PX_SCALE_X))
+
+    def _pill_radius(spec: dict) -> int:
+        try:
+            v = int(spec.get("borderRadius", 6))
+        except Exception:
+            v = 6
+        return max(0, int(v * _PX_SCALE_X))
+
+    # Vertical pill padding: spec says 2px editor → scaled.
+    pill_pad_y = max(2, int(2 * _PX_SCALE_Y))
+
+    # ── Pill pass (drawn BEHIND text) ─────────────────────────────
+    # For every line, resolve matches, then draw a rounded rectangle
+    # sized to the matched substring's actual width + paddingX.
+    per_line_matches: list[list[tuple[int, int, dict]]] = []
+    for line in lines:
+        per_line_matches.append(_find_highlight_matches(line, h_specs))
+
+    if any(per_line_matches):
+        pill_layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
+        pd = ImageDraw.Draw(pill_layer)
+        for i, line in enumerate(lines):
+            if not line:
+                continue
+            matches = per_line_matches[i]
+            if not matches:
+                continue
+            lx = _line_x(line_widths[i])
+            ly = pad_y + i * line_height
+            for start, end, spec in matches:
+                prefix = line[:start]
+                segment = line[start:end]
+                try:
+                    pre_bb = probe_draw.textbbox((0, 0), prefix, font=font)
+                    pre_w = pre_bb[2] - pre_bb[0] if prefix else 0
+                    seg_bb = probe_draw.textbbox((0, 0), segment, font=font)
+                    seg_w = seg_bb[2] - seg_bb[0]
+                except Exception:
+                    pre_w = len(prefix) * font_size // 2
+                    seg_w = len(segment) * font_size // 2
+                # textbbox of prefix may include left-side bearing; to
+                # match where the following glyph is drawn we measure
+                # prefix+segment minus segment. This handles fonts with
+                # non-zero left bearing more faithfully.
+                try:
+                    full_bb = probe_draw.textbbox((0, 0), prefix + segment, font=font)
+                    full_w = full_bb[2] - full_bb[0]
+                    # Offset of segment start = full_w - seg_w
+                    seg_offset = max(0, full_w - seg_w)
+                except Exception:
+                    seg_offset = pre_w
+
+                pad_px = _pill_pad_x(spec)
+                radius = _pill_radius(spec)
+                bg = _hex_to_rgba(spec.get("bgColor") or "#F97316", alpha)
+                # Glyph band inside the line box is roughly [ly, ly+ascent+descent].
+                glyph_h = ascent + descent
+                pill_x0 = lx + seg_offset - pad_px
+                pill_x1 = lx + seg_offset + seg_w + pad_px
+                pill_y0 = ly - pill_pad_y
+                pill_y1 = ly + glyph_h + pill_pad_y
+                # Clamp within the layer canvas.
+                pill_x0 = max(0, pill_x0)
+                pill_y0 = max(0, pill_y0)
+                pill_x1 = min(layer_w - 1, pill_x1)
+                pill_y1 = min(layer_h - 1, pill_y1)
+                if pill_x1 <= pill_x0 or pill_y1 <= pill_y0:
+                    continue
+                try:
+                    pd.rounded_rectangle(
+                        (pill_x0, pill_y0, pill_x1, pill_y1),
+                        radius=radius,
+                        fill=bg,
+                    )
+                except Exception as exc:
+                    logger.warning("pill draw failed: %s", exc)
+        text_layer = Image.alpha_composite(text_layer, pill_layer)
+        draw = ImageDraw.Draw(text_layer)
+
+    # ── Shadow pass ───────────────────────────────────────────────
+    if s.get("shadowEnabled"):
+        shadow_color = _hex_to_rgba(s.get("shadowColor") or "#000000", alpha)
+        shadow_x = int(s.get("shadowX") or 0)
+        shadow_y = int(s.get("shadowY") or 2)
+        shadow_blur = int(s.get("shadowBlur") or 6)
+        shadow_layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
+        sd_draw = ImageDraw.Draw(shadow_layer)
+        for i, line in enumerate(lines):
+            if not line:
+                continue
+            lx = _line_x(line_widths[i]) + shadow_x
+            ly = pad_y + i * line_height + shadow_y
+            try:
+                sd_draw.text((lx, ly), line, font=font, fill=shadow_color)
+            except Exception as exc:
+                logger.warning("shadow draw failed: %s", exc)
+        if shadow_blur > 0:
+            shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=shadow_blur))
+        text_layer = Image.alpha_composite(text_layer, shadow_layer)
+        draw = ImageDraw.Draw(text_layer)
+
+    # ── Main text pass ────────────────────────────────────────────
+    # Render each line as a sequence of runs, splitting on highlight
+    # boundaries so matched substrings can have their own textColor.
+    for i, line in enumerate(lines):
+        if not line:
+            continue
+        matches = per_line_matches[i]
+        lx = _line_x(line_widths[i])
+        ly = pad_y + i * line_height
+
+        # Build runs: alternating unmatched + matched spans.
+        runs: list[tuple[str, tuple[int, int, int, int]]] = []
+        cursor = 0
+        for start, end, spec in matches:
+            if start > cursor:
+                runs.append((line[cursor:start], base_color))
+            tc_hex = spec.get("textColor")
+            if tc_hex:
+                runs.append((line[start:end], _hex_to_rgba(tc_hex, alpha)))
+            else:
+                runs.append((line[start:end], base_color))
+            cursor = end
+        if cursor < len(line):
+            runs.append((line[cursor:], base_color))
+        if not runs:
+            runs = [(line, base_color)]
+
+        # Draw each run at its accumulated x offset. To keep kerning
+        # between adjacent runs visually consistent, we measure each
+        # cumulative prefix from scratch using textbbox.
+        accum = ""
+        for segment_text, seg_color in runs:
+            if not segment_text:
+                continue
+            try:
+                # Cumulative width up through the accumulated prefix.
+                # Using textbbox on the accumulated string avoids drift
+                # from summing individual-character widths (kerning).
+                if accum:
+                    prev_bb = probe_draw.textbbox((0, 0), accum, font=font)
+                    prev_w = prev_bb[2] - prev_bb[0]
+                else:
+                    prev_w = 0
+                seg_x = lx + prev_w
+            except Exception:
+                seg_x = lx + len(accum) * font_size // 2
+            try:
+                if stroke_w > 0 and stroke_color is not None:
+                    draw.text(
+                        (seg_x, ly),
+                        segment_text,
+                        font=font,
+                        fill=seg_color,
+                        stroke_width=stroke_w,
+                        stroke_fill=stroke_color,
+                    )
+                else:
+                    draw.text((seg_x, ly), segment_text, font=font, fill=seg_color)
+            except Exception as exc:
+                logger.warning("text run draw failed: %s", exc)
+            accum += segment_text
+
+    # ── Composite onto the full 1080×1920 canvas ──────────────────
+    canvas = Image.new("RGBA", (_CANVAS_W, _CANVAS_H), (0, 0, 0, 0))
+    try:
+        x_pct = float(s.get("x", 50)) / 100
+        y_pct = float(s.get("y", 65)) / 100
+    except Exception:
+        x_pct, y_pct = 0.5, 0.65
+    center_x = int(x_pct * _CANVAS_W)
+    center_y = int(y_pct * _CANVAS_H)
+    paste_x = center_x - layer_w // 2
+    paste_y = center_y - layer_h // 2
+    canvas.alpha_composite(text_layer, (paste_x, paste_y))
+
+    try:
+        canvas.save(out_path, "PNG")
+    except Exception as exc:
+        logger.warning("text+pill png save failed: %s", exc)
+        return False
+    return True
+
+
+def _render_multi_text_layer_png(layer: dict, out_path: str) -> bool:
+    """Render a single text-layer dict (multi-layer schema) to a 1080×1920 PNG.
+
+    The multi-layer schema uses percentage-of-canvas for `width`, while
+    `_render_text_layer_png` expects editor `w` in 360-logical pixels.
+    We translate here and also honor the optional `anchor` field so a
+    layer can be positioned by its top-left corner instead of its center.
+
+    Layers may additionally carry a `highlights` list describing phrases
+    that should render with a colored background pill; when present we
+    dispatch to `_render_text_layer_with_highlights_png`.
+    """
+    if not isinstance(layer, dict):
+        return False
+    text = layer.get("text") or ""
+    if not text.strip():
+        return False
+
+    style = dict(layer)
+    # Translate "width" (% of canvas) → "w" (360-logical px) for the
+    # existing renderer. A 100%-wide layer maps to w=360.
+    width_pct = layer.get("width")
+    if width_pct is not None:
+        try:
+            width_pct_f = float(width_pct)
+        except Exception:
+            width_pct_f = 85.0
+        width_pct_f = max(5.0, min(100.0, width_pct_f))
+        style["w"] = width_pct_f / 100.0 * _EDITOR_W
+
+    # Anchor handling: default "center" matches _render_text_layer_png;
+    # "top-left" means `(x, y)` is the top-left corner of the layer box.
+    anchor = (layer.get("anchor") or "center").lower()
+
+    highlights = layer.get("highlights")
+    if isinstance(highlights, list) and len(highlights) > 0:
+        ok = _render_text_layer_with_highlights_png(text, style, highlights, out_path)
+    else:
+        ok = _render_text_layer_png(text, style, out_path)
+    if not ok or anchor == "center":
+        return ok
+
+    # For "top-left" anchor we need to re-open the PNG, find the bounding
+    # box, and shift the content so it lands at (x%, y%) top-left instead
+    # of centered. Simpler: re-run render but with an x/y offset that
+    # accounts for the layer's half-size. We don't have layer dims here
+    # directly, so we approximate via the rendered canvas bbox.
+    try:
+        from PIL import Image
+        img = Image.open(out_path).convert("RGBA")
+        bbox = img.getbbox()
+        if not bbox:
+            return True
+        x0, y0, x1, y1 = bbox
+        layer_w = x1 - x0
+        layer_h = y1 - y0
+        try:
+            x_pct = float(layer.get("x", 50)) / 100
+            y_pct = float(layer.get("y", 65)) / 100
+        except Exception:
+            x_pct, y_pct = 0.5, 0.65
+        new_x = int(x_pct * _CANVAS_W)
+        new_y = int(y_pct * _CANVAS_H)
+        shifted = Image.new("RGBA", (_CANVAS_W, _CANVAS_H), (0, 0, 0, 0))
+        region = img.crop(bbox)
+        shifted.alpha_composite(region, (new_x, new_y))
+        shifted.save(out_path, "PNG")
+        return True
+    except Exception as exc:
+        logger.warning("top-left anchor shift failed: %s", exc)
+        return True
+
+
 def _render_logo_layer_png(logo_src: str, overrides: dict, out_path: str) -> bool:
     """Compose the brand logo at the requested size / shape / fit / bg,
     over an otherwise transparent 1080×1920 canvas."""
@@ -945,18 +1381,46 @@ def export_user_video(video_path: str, export_config: Dict) -> str:
     audio_config = export_config.get("audio_config") or {}
     custom_audio_path = export_config.get("custom_audio_path")
 
-    # ── Pre-render text + logo overlays ───────────────────────────────
-    headline_png = os.path.join(work, "headline.png")
-    subtitle_png = os.path.join(work, "subtitle.png")
-    logo_png = os.path.join(work, "logo.png")
+    # ── Pick the active multi-layer list, if any ──────────────────────
+    # Priority: export overrides > template defaults > legacy fallback.
+    # Only a non-empty list activates multi-layer mode. When None or [],
+    # the legacy headline+subtitle render path runs so existing templates
+    # keep working unchanged.
+    overrides_layers = export_config.get("text_layers_overrides")
+    template_layers = export_config.get("template_text_layers")
+    if isinstance(overrides_layers, list) and len(overrides_layers) > 0:
+        active_text_layers = overrides_layers
+    elif isinstance(template_layers, list) and len(template_layers) > 0:
+        active_text_layers = template_layers
+    else:
+        active_text_layers = None
 
-    has_headline = _render_text_layer_png(headline_text, headline_style, headline_png)
-    has_subtitle = _render_text_layer_png(subtitle_text, subtitle_style, subtitle_png)
+    # ── Pre-render text + logo overlays ───────────────────────────────
+    text_pngs: list[str] = []  # in render order (bottom → top)
+
+    if active_text_layers is not None:
+        for idx, layer in enumerate(active_text_layers):
+            if not isinstance(layer, dict):
+                continue
+            layer_png = os.path.join(work, f"text_layer_{idx:02d}.png")
+            if _render_multi_text_layer_png(layer, layer_png):
+                text_pngs.append(layer_png)
+    else:
+        # Legacy path — headline + subtitle pair.
+        headline_png = os.path.join(work, "headline.png")
+        subtitle_png = os.path.join(work, "subtitle.png")
+        if _render_text_layer_png(headline_text, headline_style, headline_png):
+            text_pngs.append(headline_png)
+        if _render_text_layer_png(subtitle_text, subtitle_style, subtitle_png):
+            text_pngs.append(subtitle_png)
+
+    logo_png = os.path.join(work, "logo.png")
     has_logo = _render_logo_layer_png(logo_src_path, logo_overrides, logo_png) if logo_src_path else False
 
     logger.info(
-        "export %s overlays: headline=%s subtitle=%s logo=%s",
-        export_id, has_headline, has_subtitle, has_logo,
+        "export %s overlays: text_layers=%d logo=%s (mode=%s)",
+        export_id, len(text_pngs), has_logo,
+        "multi" if active_text_layers is not None else "legacy",
     )
 
     # ── Build FFmpeg filter graph ─────────────────────────────────────
@@ -966,14 +1430,13 @@ def export_user_video(video_path: str, export_config: Dict) -> str:
 
     inputs: list[str] = ["-i", video_path]
     overlay_inputs: list[str] = []
-    for png_flag, use in (
-        (headline_png, has_headline),
-        (subtitle_png, has_subtitle),
-        (logo_png, has_logo),
-    ):
-        if use:
-            inputs.extend(["-i", png_flag])
-            overlay_inputs.append(png_flag)
+    # Text layers first (bottom → top in the list), logo on top last.
+    for png_path in text_pngs:
+        inputs.extend(["-i", png_path])
+        overlay_inputs.append(png_path)
+    if has_logo:
+        inputs.extend(["-i", logo_png])
+        overlay_inputs.append(logo_png)
 
     # STEP 1: transform the input video via the chain (scale/trim/flip)
     filter_parts = [f"[0:v]{video_chain}[vsrc]"]

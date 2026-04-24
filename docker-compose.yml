@@ -85,6 +85,11 @@ services:
       APP_URL: ${APP_URL}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
+      META_APP_ID: ${META_APP_ID:-}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      META_OAUTH_REDIRECT_URI: ${META_OAUTH_REDIRECT_URI:-}
+      META_GRAPH_VERSION: ${META_GRAPH_VERSION:-v25.0}
+      IG_TOKEN_ENC_KEY: ${IG_TOKEN_ENC_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -139,15 +144,20 @@ services:
       DATABASE_URL: postgresql://${DB_USER:-vre_user}:${DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-vre}
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
+      MINIO_EXTERNAL_ENDPOINT: ${MINIO_EXTERNAL_ENDPOINT:-}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
       MINIO_SECURE: "false"
+      META_APP_ID: ${META_APP_ID:-}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      META_GRAPH_VERSION: ${META_GRAPH_VERSION:-v25.0}
+      IG_TOKEN_ENC_KEY: ${IG_TOKEN_ENC_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: ["celery", "-A", "celery_app", "worker", "-Q", "queue.enhance,queue.export", "-c", "2", "-E", "--loglevel=info"]
+    command: ["celery", "-A", "celery_app", "worker", "-Q", "queue.enhance,queue.export,queue.publish", "-c", "2", "-E", "--loglevel=info"]
 
   celery-beat:
     build:

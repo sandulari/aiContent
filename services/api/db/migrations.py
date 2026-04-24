@@ -132,6 +132,123 @@ MIGRATION_STATEMENTS: list[str] = [
     ALTER TABLE user_pages
     ADD COLUMN IF NOT EXISTS niche_tags TEXT[]
     """,
+    # user_templates: multi-layer text support. `text_layers` is an
+    # ordered array of text-layer dicts (see video_proc.py for the
+    # schema). Legacy `headline_defaults`/`subtitle_defaults` are kept
+    # for backwards compatibility.
+    """
+    ALTER TABLE user_templates
+    ADD COLUMN IF NOT EXISTS text_layers JSONB NOT NULL DEFAULT '[]'::jsonb
+    """,
+    # user_exports: per-export override for the multi-layer text list.
+    # NULL means "use the template's text_layers".
+    """
+    ALTER TABLE user_exports
+    ADD COLUMN IF NOT EXISTS text_layers_overrides JSONB
+    """,
+    # NOTE: intentionally no back-fill of text_layers for pre-existing
+    # templates. The legacy headline_defaults/subtitle_defaults carry
+    # *style* only — the actual text lives on UserExport.headline_text /
+    # subtitle_text. Back-filling would produce 2 empty-text layers and
+    # the renderer (which prefers template.text_layers over the legacy
+    # path) would then draw nothing for existing exports. Leaving
+    # text_layers = '[]' on old templates keeps them on the legacy
+    # render path; new templates (seeded or user-created going forward)
+    # populate text_layers directly.
+    #
+    # -----------------------------------------------------------------
+    # Perf indexes (from PERF.md April 2026 audit)
+    # -----------------------------------------------------------------
+    # viral_reels full-text search on caption — similar-reels endpoint
+    # in routers/reels.py does to_tsvector(caption) @@ to_tsquery(...)
+    # on every reel detail page. Without this it's a seq scan.
+    """
+    CREATE INDEX IF NOT EXISTS idx_viral_reels_caption_fts
+    ON viral_reels USING GIN (to_tsvector('english', COALESCE(caption, '')))
+    """,
+    # Recommendation feed hot path: WHERE user_page_id = ? AND is_dismissed = FALSE
+    # ORDER BY match_score DESC. Existing single-column indexes don't cover it.
+    """
+    CREATE INDEX IF NOT EXISTS idx_recs_page_active_score
+    ON user_reel_recommendations(user_page_id, is_dismissed, match_score DESC)
+    """,
+    # Jobs endpoint: used by the polling UI every few seconds.
+    """
+    CREATE INDEX IF NOT EXISTS idx_jobs_ref
+    ON jobs(reference_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_jobs_created_desc
+    ON jobs(created_at DESC)
+    """,
+    # -----------------------------------------------------------------
+    # Instagram API with Instagram Login (OAuth)
+    # -----------------------------------------------------------------
+    # Additive columns on users — the existing ig_username +
+    # ig_session_data are kept for the RapidAPI scraper path.
+    """
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS ig_user_id VARCHAR(64)
+    """,
+    """
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS ig_account_type VARCHAR(32)
+    """,
+    """
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS ig_access_token TEXT
+    """,
+    """
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS ig_token_expires_at TIMESTAMPTZ
+    """,
+    """
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS ig_token_scope TEXT
+    """,
+    """
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS ig_profile_picture_url TEXT
+    """,
+    """
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS ig_connected_at TIMESTAMPTZ
+    """,
+    # -----------------------------------------------------------------
+    # scheduled_reels — cron-dispatched IG publishes.
+    # ON DELETE RESTRICT on user_export_id so we never orphan a queued
+    # publish by deleting the source export.
+    # -----------------------------------------------------------------
+    """
+    CREATE TABLE IF NOT EXISTS scheduled_reels (
+        id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id                UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_export_id         UUID NOT NULL REFERENCES user_exports(id) ON DELETE RESTRICT,
+        caption                TEXT,
+        user_tags              JSONB,
+        scheduled_at           TIMESTAMPTZ NOT NULL,
+        timezone               VARCHAR(64) NOT NULL DEFAULT 'UTC',
+        status                 VARCHAR(20) NOT NULL DEFAULT 'queued',
+        share_to_feed          BOOLEAN NOT NULL DEFAULT TRUE,
+        attempt_count          INTEGER NOT NULL DEFAULT 0,
+        last_error             TEXT,
+        ig_container_id        VARCHAR(64),
+        ig_media_id            VARCHAR(64),
+        published_at           TIMESTAMPTZ,
+        celery_task_id         VARCHAR(64),
+        processing_started_at  TIMESTAMPTZ,
+        created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_scheduled_reels_status_time
+    ON scheduled_reels(status, scheduled_at)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_scheduled_reels_user_time
+    ON scheduled_reels(user_id, scheduled_at)
+    """,
 ]
 
 

@@ -19,7 +19,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 CLAUDE_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL_ANALYSIS", "claude-sonnet-4-20250514")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL_ANALYSIS", "claude-opus-4-20250514")
 CLAUDE_URL = "https://api.anthropic.com/v1/messages"
 
 _HEADERS = {

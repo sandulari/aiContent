@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { Select } from "@/components/ui/select";
 
 interface SelectedLayer {
@@ -174,6 +174,20 @@ function TextControls({ p, update }: { p: Record<string, any>; update: (props: R
 
       <Slider label="Opacity" value={p.opacity ?? 100} min={0} max={100} unit="%" onChange={(v) => update({ opacity: v })} />
 
+      {/* Text-box width (%). Only shown for dynamic text layers —
+          legacy headline/subtitle uses pixel `w` which is driven by
+          the canvas edge handles, so we don't expose it here. */}
+      {typeof p.width === "number" && (
+        <Slider
+          label="Box width"
+          value={Math.round(p.width)}
+          min={10}
+          max={100}
+          unit="%"
+          onChange={(v) => update({ width: v })}
+        />
+      )}
+
       <div>
         <Label>Position (%)</Label>
         <div className="grid grid-cols-2 gap-2">
@@ -181,6 +195,180 @@ function TextControls({ p, update }: { p: Record<string, any>; update: (props: R
           <NumInput label="Y" value={Math.round(p.y ?? 50)} onChange={(v) => update({ y: v })} />
         </div>
       </div>
+
+      <HighlightsSection p={p} update={update} />
+    </div>
+  );
+}
+
+// ─── Highlights (pill backgrounds behind matched phrases) ─────────────
+// Edits a `highlights` array on the layer. Each entry draws a colored
+// pill behind every occurrence of `match` (case-insensitive). The
+// backend renders the same shape in the exported video.
+
+type HighlightSpec = {
+  match: string;
+  bgColor: string;
+  textColor?: string;
+  borderRadius?: number;
+  paddingX?: number;
+};
+
+const DEFAULT_HIGHLIGHT: HighlightSpec = {
+  match: "",
+  bgColor: "#F97316",
+  borderRadius: 6,
+  paddingX: 4,
+};
+
+function HighlightsSection({
+  p,
+  update,
+}: {
+  p: Record<string, any>;
+  update: (props: Record<string, any>) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const list: HighlightSpec[] = Array.isArray(p.highlights) ? p.highlights : [];
+
+  const commit = (next: HighlightSpec[]) => update({ highlights: next });
+
+  const addRow = () => {
+    commit([...list, { ...DEFAULT_HIGHLIGHT }]);
+  };
+  const removeRow = (i: number) => {
+    commit(list.filter((_, idx) => idx !== i));
+  };
+  const patchRow = (i: number, patch: Partial<HighlightSpec>) => {
+    commit(list.map((h, idx) => (idx === i ? { ...h, ...patch } : h)));
+  };
+
+  return (
+    <div className="pt-2 border-t border-[#30363d]">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center justify-between w-full text-left text-[11px] text-[#c9d1d9] font-medium py-1 hover:text-white"
+      >
+        <span>Highlights {list.length > 0 && `(${list.length})`}</span>
+        <span className="text-[#8b949e]">{open ? "−" : "+"}</span>
+      </button>
+      {open && (
+        <div className="space-y-2 mt-1">
+          {list.length === 0 && (
+            <p className="text-[10px] text-[#8b949e] leading-snug">
+              Add a phrase to draw a colored pill behind every occurrence (e.g.
+              "AI", "MODERN TIMES").
+            </p>
+          )}
+          {list.map((h, i) => {
+            const inherit = !h.textColor;
+            return (
+              <div
+                key={i}
+                className="border border-[#30363d] rounded p-2 space-y-2 bg-[#0d1117]"
+              >
+                <div>
+                  <Label>Phrase</Label>
+                  <input
+                    type="text"
+                    value={h.match}
+                    onChange={(e) => patchRow(i, { match: e.target.value })}
+                    placeholder="e.g. MODERN TIMES"
+                    className="w-full px-2 py-1 text-xs bg-[#010409] text-[#c9d1d9] border border-[#30363d] rounded focus:outline-none focus:border-[#58a6ff]"
+                  />
+                </div>
+                <div>
+                  <Label>Background</Label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={h.bgColor || "#F97316"}
+                      onChange={(e) => patchRow(i, { bgColor: e.target.value })}
+                      className="w-7 h-7 rounded border border-[#30363d] cursor-pointer bg-transparent"
+                    />
+                    <input
+                      type="text"
+                      value={h.bgColor || "#F97316"}
+                      onChange={(e) => patchRow(i, { bgColor: e.target.value })}
+                      className="flex-1 px-2 py-1 text-xs bg-[#010409] text-[#c9d1d9] border border-[#30363d] rounded focus:outline-none focus:border-[#58a6ff] font-mono"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <Label>Text color</Label>
+                    <button
+                      onClick={() =>
+                        patchRow(
+                          i,
+                          inherit
+                            ? { textColor: "#FFFFFF" }
+                            : { textColor: undefined }
+                        )
+                      }
+                      className="text-[10px] text-[#58a6ff] hover:underline"
+                    >
+                      {inherit ? "Override" : "Inherit"}
+                    </button>
+                  </div>
+                  {inherit ? (
+                    <p className="text-[10px] text-[#8b949e]">
+                      Uses the layer's main color.
+                    </p>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={h.textColor || "#FFFFFF"}
+                        onChange={(e) =>
+                          patchRow(i, { textColor: e.target.value })
+                        }
+                        className="w-7 h-7 rounded border border-[#30363d] cursor-pointer bg-transparent"
+                      />
+                      <input
+                        type="text"
+                        value={h.textColor || "#FFFFFF"}
+                        onChange={(e) =>
+                          patchRow(i, { textColor: e.target.value })
+                        }
+                        className="flex-1 px-2 py-1 text-xs bg-[#010409] text-[#c9d1d9] border border-[#30363d] rounded focus:outline-none focus:border-[#58a6ff] font-mono"
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <NumInput
+                    label="Radius"
+                    value={h.borderRadius ?? 6}
+                    min={0}
+                    max={40}
+                    onChange={(v) => patchRow(i, { borderRadius: v })}
+                  />
+                  <NumInput
+                    label="Pad X"
+                    value={h.paddingX ?? 4}
+                    min={0}
+                    max={40}
+                    onChange={(v) => patchRow(i, { paddingX: v })}
+                  />
+                </div>
+                <button
+                  onClick={() => removeRow(i)}
+                  className="w-full text-[10px] py-1 rounded border border-[#30363d] text-[#f85149] hover:border-[#f85149] hover:bg-[#f85149]/5 transition-colors"
+                >
+                  Remove
+                </button>
+              </div>
+            );
+          })}
+          <button
+            onClick={addRow}
+            className="w-full text-[11px] py-1.5 rounded border border-dashed border-[#30363d] text-[#c9d1d9] hover:border-[#58a6ff] hover:bg-[#58a6ff]/5 transition-colors"
+          >
+            + Add highlight
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -332,10 +520,17 @@ export function PropertiesPanel({ selectedLayer, onUpdateProps }: PropertiesPane
 
   const p = selectedLayer.props;
 
+  const isTextType =
+    selectedLayer.type === "headline" ||
+    selectedLayer.type === "subtitle" ||
+    selectedLayer.type === "handle" ||
+    selectedLayer.type === "account_name" ||
+    selectedLayer.type === "custom";
+
   return (
     <div className="p-3 space-y-1">
       {selectedLayer.type === "video" && <VideoControls p={p} update={update} />}
-      {(selectedLayer.type === "headline" || selectedLayer.type === "subtitle") && <TextControls p={p} update={update} />}
+      {isTextType && <TextControls p={p} update={update} />}
       {selectedLayer.type === "logo" && <LogoControls p={p} update={update} />}
     </div>
   );
