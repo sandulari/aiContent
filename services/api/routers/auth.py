@@ -1,5 +1,8 @@
+import hmac
 import logging
 import os
+import time
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -30,6 +33,41 @@ logger = logging.getLogger(__name__)
 APP_URL = os.getenv("APP_URL", "http://localhost:8080")
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# ---------------------------------------------------------------------------
+# In-memory per-IP rate limiter for unauthenticated auth endpoints.
+# Keyed by the trusted client IP — caps brute-force login attempts and
+# /forgot-password email floods. Per-IP rather than per-email so an
+# attacker can't lock a victim out by submitting their email repeatedly.
+# ---------------------------------------------------------------------------
+
+_AUTH_RL: dict[str, list[float]] = defaultdict(list)
+_AUTH_RL_WINDOW = 60        # seconds
+_AUTH_RL_LOGIN_MAX = 8      # /login attempts / IP / window
+_AUTH_RL_RESET_MAX = 5      # /forgot-password requests / IP / window
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort caller IP. Falls back to a constant key if unavailable
+    so the limiter never silently disables (e.g. behind a misconfigured
+    proxy that strips the client address)."""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return getattr(request.client, "host", None) or "unknown"
+
+
+def _check_auth_rate_limit(request: Request, bucket: str, max_per_window: int) -> None:
+    key = f"{bucket}:{_client_ip(request)}"
+    now = time.time()
+    hits = [t for t in _AUTH_RL[key] if now - t < _AUTH_RL_WINDOW]
+    if len(hits) >= max_per_window:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many attempts. Please wait a minute and try again.",
+        )
+    hits.append(now)
+    _AUTH_RL[key] = hits
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +153,13 @@ async def register(body: UserCreate, response: Response, db: AsyncSession = Depe
 
 
 @router.post("/login")
-async def login(body: UserLogin, response: Response, db: AsyncSession = Depends(get_db)):
+async def login(
+    body: UserLogin,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    _check_auth_rate_limit(request, "login", _AUTH_RL_LOGIN_MAX)
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.password_hash):
@@ -187,8 +231,13 @@ async def me(current_user: User = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 @router.post("/forgot-password")
-async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """Request a password-reset link. Always returns 200 to avoid leaking user existence."""
+    _check_auth_rate_limit(request, "forgot", _AUTH_RL_RESET_MAX)
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
     if user:
@@ -217,7 +266,9 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(
         raise HTTPException(status_code=400, detail="Reset link has expired. Please request a new one.")
 
     hashed = hash_reset_token(body.token)
-    if hashed != user.password_reset_token:
+    # Constant-time comparison so a side channel can't differentiate
+    # "wrong-token" from "no-such-user" via response timing.
+    if not hmac.compare_digest(hashed, user.password_reset_token):
         raise HTTPException(status_code=400, detail="Invalid or expired reset link")
 
     user.password_hash = hash_password(body.new_password)
