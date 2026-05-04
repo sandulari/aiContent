@@ -222,9 +222,15 @@ function InstagramSettingsInner() {
     if (!errorCode) return null;
 
     const isPersonal = errorCode === "personal_account_not_supported";
-    const message = isPersonal
-      ? "Your Instagram account is set to Personal. Publishing requires a Business or Creator account. Switch in the IG app: Settings → Account type and tools → Switch to professional account."
-      : `${humanizeErrorCode(errorCode)}. Please try connecting again.`;
+    const isMissingScope = errorCode === "missing_publish_scope";
+    let message: string;
+    if (isPersonal) {
+      message = "Your Instagram account is set to Personal. Publishing requires a Business or Creator account. Switch in the IG app: Settings → Account type and tools → Switch to professional account.";
+    } else if (isMissingScope) {
+      message = "Connection succeeded but you didn't grant the publish permission. Click \"Try again\" and make sure \"Create content\" is enabled on Instagram's consent screen.";
+    } else {
+      message = `${humanizeErrorCode(errorCode)}. Please try connecting again.`;
+    }
 
     return (
       <div className="flex items-start gap-3 p-4 rounded-lg border border-[#f85149]/40 bg-[#1a0a0a]">

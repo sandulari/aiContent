@@ -7,7 +7,7 @@ user_exports, viral_reels in the user's recommendation/export scope).
 """
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import get_db
@@ -30,28 +30,19 @@ async def list_jobs(
     db: AsyncSession = Depends(get_db),
 ):
     """Return jobs whose reference_id belongs to the current user."""
-    own_export_ids = {
-        str(row[0])
-        for row in (
-            await db.execute(select(UserExport.id).where(UserExport.user_id == current_user.id))
-        ).all()
-    }
-    own_page_ids = {
-        str(row[0])
-        for row in (
-            await db.execute(select(UserPage.id).where(UserPage.user_id == current_user.id))
-        ).all()
-    }
-    allowed_ids = own_export_ids | own_page_ids
-    if not allowed_ids:
-        return {"items": [], "total": 0}
-
-    stmt = select(Job).where(Job.reference_id.in_(list(allowed_ids))).order_by(Job.created_at.desc())
-    count_stmt = (
-        select(func.count())
-        .select_from(Job)
-        .where(Job.reference_id.in_(list(allowed_ids)))
+    # Push ownership scoping into SQL: two correlated IN subqueries instead
+    # of two round-trips that materialize UUID lists in Python. The
+    # user_exports(user_id) and user_pages(user_id, page_type) indexes
+    # cover the subqueries.
+    own_exports = select(UserExport.id).where(UserExport.user_id == current_user.id)
+    own_pages = select(UserPage.id).where(UserPage.user_id == current_user.id)
+    ownership = or_(
+        Job.reference_id.in_(own_exports),
+        Job.reference_id.in_(own_pages),
     )
+
+    stmt = select(Job).where(ownership).order_by(Job.created_at.desc())
+    count_stmt = select(func.count()).select_from(Job).where(ownership)
     if job_type:
         stmt = stmt.where(Job.job_type == job_type)
         count_stmt = count_stmt.where(Job.job_type == job_type)

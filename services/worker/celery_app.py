@@ -31,6 +31,7 @@ app.conf.update(
         "tasks.page_stats_snapshot.*": {"queue": "queue.analyze"},
         "tasks.seed_default_template.*": {"queue": "queue.analyze"},
         "tasks.publish_scheduled_reel.*": {"queue": "queue.publish"},
+        "tasks.auto_discover.*": {"queue": "queue.discover"},
     },
     beat_schedule={
         # Keep the viral_reels pool fresh on every confirmed theme page.
@@ -89,3 +90,4 @@ import tasks.page_stats_snapshot  # noqa: F401, E402
 import tasks.deep_discovery  # noqa: F401, E402
 import tasks.seed_default_template  # noqa: F401, E402
 import tasks.publish_scheduled_reel  # noqa: F401, E402
+import tasks.auto_discover  # noqa: F401, E402

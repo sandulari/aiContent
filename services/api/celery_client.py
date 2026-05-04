@@ -54,3 +54,11 @@ def trigger_deep_discovery(page_id: UUID) -> str:
 def trigger_seed_default_template(user_id: UUID) -> str:
     r = celery_app.send_task("tasks.seed_default_template.seed_for_user", args=[str(user_id)], queue="queue.analyze")
     return r.id
+
+def trigger_auto_discover(ig_username: str, niche_slug: str) -> str:
+    r = celery_app.send_task(
+        "tasks.auto_discover.auto_discover_for_user_page",
+        args=[ig_username, niche_slug],
+        queue="queue.discover",
+    )
+    return r.id

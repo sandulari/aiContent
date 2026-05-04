@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Select } from "@/components/ui/select";
 
 interface SelectedLayer {
@@ -107,7 +107,12 @@ function NumInput({ label, value, onChange, min, max }: { label: string; value: 
         value={Number.isFinite(value) ? value : 0}
         onChange={(e) => {
           const raw = e.target.value;
-          if (raw === "") { onChange(0); return; }
+          // Empty input = user is mid-edit (cleared to retype). Don't
+          // commit 0 — that would snap the layer to (0,0) on every clear,
+          // and rewrite the user's value with 0 between keystrokes. The
+          // controlled `value` will re-sync from the prop, so the input
+          // stays consistent.
+          if (raw === "") return;
           const n = Number(raw);
           if (!Number.isFinite(n)) return;
           let clamped = n;
@@ -118,6 +123,46 @@ function NumInput({ label, value, onChange, min, max }: { label: string; value: 
         className="w-full px-2 py-1 text-xs bg-[#0d1117] text-[#c9d1d9] border border-[#30363d] rounded focus:outline-none focus:border-[#58a6ff]"
       />
     </div>
+  );
+}
+
+// Hex-color text input that defers commits until the value is a valid
+// 3- or 6-digit hex code, or until blur. Without this, every partial
+// keystroke (e.g. "#" → "#f" → "#ff") gets persisted to layer state
+// and round-tripped through autosave.
+function HexInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  const lastSyncedRef = useRef(value);
+  useEffect(() => {
+    if (value !== lastSyncedRef.current) {
+      setDraft(value);
+      lastSyncedRef.current = value;
+    }
+  }, [value]);
+  const commit = (s: string) => {
+    if (/^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(s)) {
+      onChange(s);
+      lastSyncedRef.current = s;
+    } else {
+      // Invalid on blur: revert to last good value.
+      setDraft(lastSyncedRef.current);
+    }
+  };
+  return (
+    <input
+      type="text"
+      value={draft}
+      onChange={(e) => {
+        const v = e.target.value;
+        setDraft(v);
+        if (/^#[0-9a-f]{6}$/i.test(v)) {
+          onChange(v);
+          lastSyncedRef.current = v;
+        }
+      }}
+      onBlur={(e) => commit(e.target.value)}
+      className="flex-1 px-2 py-1 text-xs bg-[#0d1117] text-[#c9d1d9] border border-[#30363d] rounded focus:outline-none focus:border-[#58a6ff] font-mono"
+    />
   );
 }
 
@@ -138,8 +183,7 @@ function TextControls({ p, update }: { p: Record<string, any>; update: (props: R
         <div className="flex items-center gap-2 mb-2">
           <input type="color" value={p.color || "#ffffff"} onChange={(e) => update({ color: e.target.value })}
             className="w-7 h-7 rounded border border-[#30363d] cursor-pointer bg-transparent" />
-          <input type="text" value={p.color || "#ffffff"} onChange={(e) => update({ color: e.target.value })}
-            className="flex-1 px-2 py-1 text-xs bg-[#0d1117] text-[#c9d1d9] border border-[#30363d] rounded focus:outline-none focus:border-[#58a6ff] font-mono" />
+          <HexInput value={p.color || "#ffffff"} onChange={(v) => update({ color: v })} />
         </div>
         <div className="flex flex-wrap gap-1">
           {SWATCHES.map((c) => (
@@ -286,11 +330,9 @@ function HighlightsSection({
                       onChange={(e) => patchRow(i, { bgColor: e.target.value })}
                       className="w-7 h-7 rounded border border-[#30363d] cursor-pointer bg-transparent"
                     />
-                    <input
-                      type="text"
+                    <HexInput
                       value={h.bgColor || "#F97316"}
-                      onChange={(e) => patchRow(i, { bgColor: e.target.value })}
-                      className="flex-1 px-2 py-1 text-xs bg-[#010409] text-[#c9d1d9] border border-[#30363d] rounded focus:outline-none focus:border-[#58a6ff] font-mono"
+                      onChange={(v) => patchRow(i, { bgColor: v })}
                     />
                   </div>
                 </div>
@@ -325,13 +367,9 @@ function HighlightsSection({
                         }
                         className="w-7 h-7 rounded border border-[#30363d] cursor-pointer bg-transparent"
                       />
-                      <input
-                        type="text"
+                      <HexInput
                         value={h.textColor || "#FFFFFF"}
-                        onChange={(e) =>
-                          patchRow(i, { textColor: e.target.value })
-                        }
-                        className="flex-1 px-2 py-1 text-xs bg-[#010409] text-[#c9d1d9] border border-[#30363d] rounded focus:outline-none focus:border-[#58a6ff] font-mono"
+                        onChange={(v) => patchRow(i, { textColor: v })}
                       />
                     </div>
                   )}

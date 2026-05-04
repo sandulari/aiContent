@@ -117,10 +117,11 @@ async def get_template(template_id: UUID, current_user: User = Depends(get_curre
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_template(body: TemplateCreateRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     # If this is the user's first template, make it default.
-    count = (await db.execute(
-        select(UserTemplate).where(UserTemplate.user_id == current_user.id)
-    )).scalars().first()
-    is_first = count is None
+    is_first = (await db.execute(
+        select(func.count())
+        .select_from(UserTemplate)
+        .where(UserTemplate.user_id == current_user.id)
+    )).scalar() == 0
 
     t = UserTemplate(
         user_id=current_user.id,

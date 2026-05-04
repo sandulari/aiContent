@@ -128,29 +128,24 @@ async def get_recommendations_summary(
     if not page.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Page not found")
 
-    total = (
+    row = (
         await db.execute(
-            select(func.count())
-            .select_from(UserReelRecommendation)
-            .where(
-                UserReelRecommendation.user_page_id == page_id,
-                UserReelRecommendation.is_dismissed.is_(False),
+            select(
+                func.count().label("total"),
+                func.count()
+                .filter(ViralReel.view_count >= VIRAL_VIEW_FLOOR)
+                .label("viral"),
             )
-        )
-    ).scalar() or 0
-
-    viral = (
-        await db.execute(
-            select(func.count())
             .select_from(UserReelRecommendation)
             .join(ViralReel, ViralReel.id == UserReelRecommendation.viral_reel_id)
             .where(
                 UserReelRecommendation.user_page_id == page_id,
                 UserReelRecommendation.is_dismissed.is_(False),
-                ViralReel.view_count >= VIRAL_VIEW_FLOOR,
             )
         )
-    ).scalar() or 0
+    ).one()
+    total = row.total or 0
+    viral = row.viral or 0
 
     return {
         "total": total,

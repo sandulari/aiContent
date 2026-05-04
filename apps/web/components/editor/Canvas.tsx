@@ -58,6 +58,14 @@ export function Canvas({
   } | null>(null);
   // Which text layer is in inline-edit mode (null = none)
   const [editingText, setEditingText] = useState<string | null>(null);
+  // Tracks which layer we've already focused for the current edit
+  // session. Without this, the inline ref callback re-fires on every
+  // render and re-runs selectNodeContents, blowing away the user's
+  // caret position mid-typing.
+  const editFocusedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!editingText) editFocusedForRef.current = null;
+  }, [editingText]);
   // Active alignment guides during drag (Canva-style snap lines)
   const [guides, setGuides] = useState<{ v: boolean; h: boolean }>({
     v: false,
@@ -191,8 +199,8 @@ export function Canvas({
       } else {
         const textLayer = getTextLayer(drag.id);
         if (drag.handle === "move") {
-          let nx = Math.max(0, Math.min(100, (o.x || 50) + (dx / CANVAS_W) * 100));
-          let ny = Math.max(0, Math.min(100, (o.y || 50) + (dy / CANVAS_H) * 100));
+          let nx = Math.max(0, Math.min(100, (o.x ?? 50) + (dx / CANVAS_W) * 100));
+          let ny = Math.max(0, Math.min(100, (o.y ?? 50) + (dy / CANVAS_H) * 100));
           // Canva-style center snap: within SNAP_THRESHOLD% of 50% on
           // either axis, force to exactly 50 and light up the guide.
           const nearV = Math.abs(nx - 50) < SNAP_THRESHOLD;
@@ -417,7 +425,9 @@ export function Canvas({
   // commits and exits; Escape cancels; blur commits.
   const commitTextEdit = (layerId: string, el: HTMLDivElement | null) => {
     if (!el) return;
-    const newText = el.innerText.trim();
+    // Don't trim: leading/trailing spaces are intentional formatting in
+    // headlines (e.g. "  YOUR TEXT  " for visual padding).
+    const newText = el.innerText;
     if (getTextLayer(layerId) && onUpdateTextLayer) {
       onUpdateTextLayer(layerId, { text: newText });
     } else {
@@ -670,7 +680,7 @@ export function Canvas({
 
               return (
                 <div
-                  key={`${layerId}-${t.fontFamily}`}
+                  key={layerId}
                   onMouseDown={(e) => {
                     if (isEditing) return;
                     startDrag(e, layerId, "move");
@@ -720,18 +730,19 @@ export function Canvas({
                       wordBreak: "break-word",
                     }}
                     ref={(el) => {
-                      if (el && isEditing && document.activeElement !== el) {
-                        el.focus();
-                        const range = document.createRange();
-                        range.selectNodeContents(el);
-                        const sel = window.getSelection();
-                        sel?.removeAllRanges();
-                        sel?.addRange(range);
-                      }
+                      if (!el || !isEditing) return;
+                      if (editFocusedForRef.current === layerId) return;
+                      el.focus();
+                      const range = document.createRange();
+                      range.selectNodeContents(el);
+                      const sel = window.getSelection();
+                      sel?.removeAllRanges();
+                      sel?.addRange(range);
+                      editFocusedForRef.current = layerId;
                     }}
                   >
                     {isEditing
-                      ? t.text || `Text (${t.role})`
+                      ? t.text || ""
                       : renderTextWithHighlights(
                           t.text || `Text (${t.role})`,
                           t.highlights,
@@ -769,7 +780,7 @@ export function Canvas({
 
               return (
                 <div
-                  key={`${layerId}-${p.fontFamily || 'Inter'}`}
+                  key={layerId}
                   onMouseDown={(e) => {
                     if (isEditing) return;
                     startDrag(e, layerId, "move");
@@ -819,17 +830,20 @@ export function Canvas({
                       wordBreak: "break-word",
                     }}
                     ref={(el) => {
-                      if (el && isEditing && document.activeElement !== el) {
-                        el.focus();
-                        const range = document.createRange();
-                        range.selectNodeContents(el);
-                        const sel = window.getSelection();
-                        sel?.removeAllRanges();
-                        sel?.addRange(range);
-                      }
+                      if (!el || !isEditing) return;
+                      if (editFocusedForRef.current === layerId) return;
+                      el.focus();
+                      const range = document.createRange();
+                      range.selectNodeContents(el);
+                      const sel = window.getSelection();
+                      sel?.removeAllRanges();
+                      sel?.addRange(range);
+                      editFocusedForRef.current = layerId;
                     }}
                   >
-                    {p.text || (isHeadline ? "Headline" : "Subtitle")}
+                    {isEditing
+                      ? p.text || ""
+                      : p.text || (isHeadline ? "Headline" : "Subtitle")}
                   </div>
                   {isSel(layerId) && !isEditing && (
                     <>

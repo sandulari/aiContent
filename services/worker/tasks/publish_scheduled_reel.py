@@ -228,6 +228,10 @@ def _normalize_user_tags(user_tags: Any) -> List[Dict[str, Any]]:
 
 
 def _mark_failed(reel_id: str, reason: str) -> None:
+    # Guard against clobbering terminal states. cleanup_stuck_processing
+    # can race a still-running publish task (e.g., worker stuck >30m on a
+    # Meta call); without this guard the loser's 4xx-already-published
+    # response would flip a successful row from published -> failed.
     with get_session() as session:
         session.execute(
             text(
@@ -238,6 +242,7 @@ def _mark_failed(reel_id: str, reason: str) -> None:
                     celery_task_id = NULL,
                     updated_at = NOW()
                 WHERE id = :id
+                  AND status NOT IN ('published', 'cancelled')
                 """
             ),
             {"id": reel_id, "err": reason[:1000]},
@@ -246,6 +251,7 @@ def _mark_failed(reel_id: str, reason: str) -> None:
 
 
 def _requeue(reel_id: str, delay_minutes: int, reason: str) -> None:
+    # Same terminal-state guard as _mark_failed.
     with get_session() as session:
         session.execute(
             text(
@@ -258,6 +264,7 @@ def _requeue(reel_id: str, delay_minutes: int, reason: str) -> None:
                     processing_started_at = NULL,
                     updated_at = NOW()
                 WHERE id = :id
+                  AND status NOT IN ('published', 'cancelled')
                 """
             ),
             {"id": reel_id, "mins": str(delay_minutes), "err": reason[:1000]},
@@ -870,11 +877,13 @@ def cleanup_stuck_processing():
                     timeout=20,
                 )
             except requests.RequestException as exc:
+                # Meta unreachable — leave the row in processing so the
+                # next 15-min tick can retry. Failing here would burn
+                # otherwise-recoverable rows during a Graph outage.
                 logger.warning(
-                    "cleanup_stuck_processing %s unreachable: %s", reel_id, exc
+                    "cleanup_stuck_processing %s unreachable, skipping: %s",
+                    reel_id, exc,
                 )
-                _mark_failed(reel_id, "stuck_processing_timeout")
-                reconciled += 1
                 continue
 
             if resp.status_code >= 400:
@@ -886,16 +895,23 @@ def cleanup_stuck_processing():
                     subcode,
                     msg,
                 )
-                _mark_failed(
-                    reel_id,
-                    "stuck_processing_timeout"
-                    if not _is_token_error_subcode(subcode)
-                    else "ig_token_invalid",
-                )
-                reconciled += 1
+                # Token revoked is permanent — but a generic 4xx/5xx
+                # could be transient (rate limit, temporary 5xx, eventual
+                # consistency on the container id). Only fail on definite
+                # signals; leave the rest for the next tick.
+                if _is_token_error_subcode(subcode):
+                    _mark_failed(reel_id, "ig_token_invalid")
+                    reconciled += 1
                 continue
 
-            body = resp.json() if resp.content else {}
+            try:
+                body = resp.json() if resp.content else {}
+            except ValueError:
+                logger.warning(
+                    "cleanup_stuck_processing %s non-JSON response, skipping",
+                    reel_id,
+                )
+                continue
             status_code = (body.get("status_code") or "").upper()
 
             if status_code == "FINISHED":

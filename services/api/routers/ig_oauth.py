@@ -26,6 +26,7 @@ import os
 import secrets
 from datetime import datetime, timezone, timedelta
 from typing import Any
+from urllib.parse import quote
 from uuid import UUID
 
 import httpx
@@ -116,6 +117,32 @@ def _verify_state(state: str) -> str | None:
 
 def _redis_client() -> Redis:
     return Redis.from_url(REDIS_URL, decode_responses=True)
+
+
+# Required scope for content publishing — without it, /scheduled-reels
+# will fail at Graph API time. Validated at OAuth completion so a user
+# who deselects the publish scope sees the error immediately, not later.
+_REQUIRED_PUBLISH_SCOPE = "instagram_business_content_publish"
+
+
+async def _consume_nonce(state: str | None) -> None:
+    """Best-effort delete of the Redis nonce — for error / abandon paths.
+
+    Returning early on error without consuming would leave the nonce live
+    for 10 min; harmless but messy.
+    """
+    if not state:
+        return
+    nonce = _verify_state(state)
+    if not nonce:
+        return
+    redis = _redis_client()
+    try:
+        await redis.delete(_NONCE_KEY_PREFIX + nonce)
+    except Exception:  # noqa: BLE001 — Redis can fail; nonce will TTL out.
+        pass
+    finally:
+        await redis.aclose()
 
 
 # ---------------------------------------------------------------------------
@@ -300,8 +327,9 @@ async def oauth_callback(
     # Case 1: user denied or Meta returned an error.
     if error:
         logger.info("IG OAuth denied or errored: %s — %s", error, error_description)
+        await _consume_nonce(state)
         return RedirectResponse(
-            url=f"{APP_URL}/settings/instagram?error={error}",
+            url=f"{APP_URL}/settings/instagram?error={quote(error, safe='')}",
             status_code=302,
         )
 
@@ -357,6 +385,24 @@ async def oauth_callback(
         )
         return RedirectResponse(
             url=f"{APP_URL}/settings/instagram?error=personal_account_not_supported",
+            status_code=302,
+        )
+
+    # Hard stop if the user deselected the publish scope on Meta's consent
+    # screen. Without it, every /scheduled-reels publish would fail at
+    # Graph API time and `can_publish` would lie to the UI.
+    granted_scopes = (
+        {p.lower() for p in permissions}
+        if isinstance(permissions, list)
+        else {p.strip().lower() for p in str(permissions).split(",") if p.strip()}
+    )
+    if _REQUIRED_PUBLISH_SCOPE not in granted_scopes:
+        logger.info(
+            "IG OAuth missing publish scope for user=%s ig=%s granted=%s",
+            user.id, profile.get("username"), sorted(granted_scopes),
+        )
+        return RedirectResponse(
+            url=f"{APP_URL}/settings/instagram?error=missing_publish_scope",
             status_code=302,
         )
 
