@@ -19,7 +19,13 @@ function formatNumber(n: number | null): string {
 }
 
 function toISODate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  // toISOString() returns UTC, so a user in PST at 10pm Jan 14 would
+  // get "2026-01-15" — wrong by a day for the user's local "today".
+  // Build the date string from local components instead.
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function today(): string {
@@ -448,21 +454,31 @@ function ReelsTable({ reels }: { reels: NonNullable<DashboardData["reels"]> }) {
           <ColHeader label="Comments" sortKey="comments" />
           <ColHeader label="Posted" sortKey="date" />
         </div>
-        {sorted.map((reel, i) => (
-          <a
-            key={reel.ig_code}
-            href={reel.ig_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`grid grid-cols-[1fr_80px_80px_80px_100px] gap-2 px-4 py-3 items-center hover:bg-[#1c2129] transition-colors ${i !== sorted.length - 1 ? "border-b border-[#21262d]/50" : ""}`}
-          >
-            <span className="text-xs text-[#e6edf3] truncate">{reel.caption || "Untitled"}</span>
-            <span className="text-xs text-[#e6edf3] text-right font-medium tabular-nums">{formatNumber(reel.view_count)}</span>
-            <span className="text-xs text-[#e6edf3] text-right tabular-nums">{formatNumber(reel.like_count)}</span>
-            <span className="text-xs text-[#7d8590] text-right tabular-nums">{formatNumber(reel.comment_count)}</span>
-            <span className="text-[10px] text-[#484f58] text-right">{reel.posted_at ? formatDate(reel.posted_at) : "—"}</span>
-          </a>
-        ))}
+        {sorted.map((reel, i) => {
+          const className = `grid grid-cols-[1fr_80px_80px_80px_100px] gap-2 px-4 py-3 items-center hover:bg-[#1c2129] transition-colors ${i !== sorted.length - 1 ? "border-b border-[#21262d]/50" : ""}`;
+          // Render a non-link <div> when ig_url is missing — without
+          // this guard `<a href={undefined}>` navigates to /undefined.
+          // Use a stable composite key in case ig_code is ever null/dup.
+          const key = reel.ig_code ?? `${i}-${reel.posted_at ?? ""}`;
+          const inner = (
+            <>
+              <span className="text-xs text-[#e6edf3] truncate">{reel.caption || "Untitled"}</span>
+              <span className="text-xs text-[#e6edf3] text-right font-medium tabular-nums">{formatNumber(reel.view_count)}</span>
+              <span className="text-xs text-[#e6edf3] text-right tabular-nums">{formatNumber(reel.like_count)}</span>
+              <span className="text-xs text-[#7d8590] text-right tabular-nums">{formatNumber(reel.comment_count)}</span>
+              <span className="text-[10px] text-[#484f58] text-right">{reel.posted_at ? formatDate(reel.posted_at) : "—"}</span>
+            </>
+          );
+          return reel.ig_url ? (
+            <a key={key} href={reel.ig_url} target="_blank" rel="noopener noreferrer" className={className}>
+              {inner}
+            </a>
+          ) : (
+            <div key={key} className={className}>
+              {inner}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -484,6 +500,15 @@ export default function DashboardPage() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [dashLoading, setDashLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // Monotonic request id — discards stale responses when the user
+  // rapidly switches date range or active page. Without it, a slow
+  // earlier response can land after a faster later one and overwrite
+  // the correct dashboard with stale data.
+  const fetchSeqRef = useRef(0);
+  // setTimeout handle for the post-refresh re-fetch, cleared on unmount
+  // / page change so a 3s timer started for one page doesn't fire its
+  // fetchDashboard with the now-stale closure.
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Date range - default to Last 7 days
   const [dateRange, setDateRange] = useState<DateRange>(() => ({
@@ -514,6 +539,8 @@ export default function DashboardPage() {
   // ── Fetch dashboard data ────────────────────────────────────────────
 
   const fetchDashboard = useCallback(async (pageId: string, range: DateRange) => {
+    const reqId = ++fetchSeqRef.current;
+    const isStale = () => reqId !== fetchSeqRef.current;
     setDashLoading(true);
     setError(null);
     try {
@@ -522,11 +549,13 @@ export default function DashboardPage() {
         from_date: range.from,
         to_date: range.to,
       });
+      if (isStale()) return;
       setDashboard(data);
     } catch (newErr: any) {
       // Fallback to the old weekly-dashboard endpoint
       try {
         const weekly: WeeklyDashboard = await api.myPages.getWeeklyDashboard(pageId);
+        if (isStale()) return;
         // Map WeeklyDashboard to DashboardData shape
         setDashboard({
           page_id: weekly.page_id,
@@ -562,6 +591,7 @@ export default function DashboardPage() {
           has_data: weekly.has_data,
         });
       } catch {
+        if (isStale()) return;
         // Both failed - set empty dashboard
         setDashboard({
           page_id: pageId,
@@ -589,13 +619,19 @@ export default function DashboardPage() {
         });
       }
     }
-    setDashLoading(false);
+    if (!isStale()) setDashLoading(false);
   }, [activePage]);
 
   useEffect(() => {
     if (!activePage) return;
     fetchDashboard(activePage.id, dateRange);
   }, [activePage, dateRange, fetchDashboard]);
+
+  // Clear any pending refresh-debounce on unmount so it doesn't fire
+  // fetchDashboard for a stale page after navigation.
+  useEffect(() => () => {
+    if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+  }, []);
 
   // ── Refresh stats ───────────────────────────────────────────────────
 
@@ -610,8 +646,12 @@ export default function DashboardPage() {
       setRefreshing(false);
       return;
     }
-    // Wait 3 seconds then re-fetch
-    setTimeout(() => {
+    // Wait 3 seconds then re-fetch. Stash the timer handle so an unmount
+    // / page switch can clear it; otherwise it'd fire fetchDashboard
+    // closed over the stale activePage / dateRange.
+    if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+    refreshTimeoutRef.current = setTimeout(() => {
+      refreshTimeoutRef.current = null;
       fetchDashboard(activePage.id, dateRange);
       setRefreshing(false);
     }, 3000);

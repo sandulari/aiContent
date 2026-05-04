@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -27,6 +27,12 @@ export default function DiscoverPage() {
   const [offset, setOffset] = useState<number>(0);
   const [hasMore, setHasMore] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  // Monotonic request id — discards stale responses when the user
+  // rapidly switches filters or active page. Without this, a slow
+  // earlier response can land after a faster later one and overwrite
+  // the correct rec list. Same id is used for loadRecs and loadMore so
+  // an in-flight loadMore is invalidated when filters change.
+  const recsSeqRef = useRef(0);
 
   const fetchPages = useCallback(async () => {
     try {
@@ -46,6 +52,8 @@ export default function DiscoverPage() {
 
   const loadRecs = useCallback(async () => {
     if (!activePage) return;
+    const reqId = ++recsSeqRef.current;
+    const isStale = () => reqId !== recsSeqRef.current;
     setLoadingRecs(true);
     setOffset(0);
     setHasMore(true);
@@ -59,22 +67,29 @@ export default function DiscoverPage() {
         }),
         api.myPages.getRecommendationsSummary(activePage.id).catch(() => null),
       ]);
+      if (isStale()) return;
       setRecs(list);
       setSummary(sum);
       setOffset(list.length);
       setHasMore(list.length >= pageSize);
     } catch (e: any) {
+      if (isStale()) return;
       console.error("Failed to load recommendations:", e?.message || "unknown error");
       setError(e?.message || "Failed to load recommendations. Please try again.");
       setRecs([]);
       setSummary(null);
       setHasMore(false);
+    } finally {
+      if (!isStale()) setLoadingRecs(false);
     }
-    setLoadingRecs(false);
   }, [activePage, sortBy, minViews, pageSize]);
 
   const loadMore = useCallback(async () => {
     if (!activePage || loadingMore || !hasMore) return;
+    // Tag this load with the current rec sequence — if a filter change
+    // bumps the sequence mid-flight, drop the response so we don't
+    // append page-2 of the old filter to page-1 of the new filter.
+    const reqId = recsSeqRef.current;
     setLoadingMore(true);
     try {
       const next = await api.myPages.getRecommendations(activePage.id, {
@@ -83,6 +98,7 @@ export default function DiscoverPage() {
         offset,
         min_views: minViews,
       });
+      if (reqId !== recsSeqRef.current) return;
       setRecs((prev) => {
         const seen = new Set(prev.map((r) => r.id));
         const add = next.filter((r) => !seen.has(r.id));
@@ -91,11 +107,13 @@ export default function DiscoverPage() {
       setOffset((o) => o + next.length);
       if (next.length < pageSize) setHasMore(false);
     } catch (e: any) {
+      if (reqId !== recsSeqRef.current) return;
       console.error("Failed to load more recommendations:", e?.message || "unknown error");
       setError(e?.message || "Failed to load more reels. Please try again.");
       setHasMore(false);
+    } finally {
+      if (reqId === recsSeqRef.current) setLoadingMore(false);
     }
-    setLoadingMore(false);
   }, [activePage, sortBy, minViews, pageSize, offset, loadingMore, hasMore]);
 
   useEffect(() => {
@@ -261,7 +279,10 @@ export default function DiscoverPage() {
                     </span>
                   )}
                 </div>
-                <div className="absolute top-2 right-2">
+                {/* Score badge swaps out for the dismiss button on hover so
+                    they don't visually overlap. pointer-events-none makes
+                    sure stray clicks always reach what's underneath. */}
+                <div className="absolute top-2 right-2 group-hover:opacity-0 transition-opacity pointer-events-none">
                   <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${Math.round(rec.match_score * 100) > 70 ? "bg-[#3fb950]/15 text-[#3fb950]" : "bg-[#0f2e16]/90 text-[#3fb950]"}`}>
                     {Math.round(rec.match_score * 100)}%
                   </span>

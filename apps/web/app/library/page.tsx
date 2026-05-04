@@ -26,7 +26,10 @@ export default function LibraryPage() {
     }
     setLoading(false);
   }, []);
-  usePolling(fetch, 15000, true);
+  // Pause polling while a delete is in flight — otherwise a poll
+  // landing before the backend commits the DELETE can momentarily
+  // resurrect the item in the UI before the optimistic filter kicks in.
+  usePolling(fetch, 15000, deletingId === null);
 
   if (loading) return <SkeletonLibrary />;
 
@@ -62,12 +65,11 @@ export default function LibraryPage() {
                 </div>
                 <div className="flex gap-2 flex-wrap">
                   <Button size="sm" className="flex-1" variant="ghost" onClick={() => router.push(`/editor/${exp.id}`)}>Edit</Button>
-                  {(exp.export_status === "done" || exp.export_status === "completed") && exp.export_minio_key && (
+                  {exp.export_status === "done" && exp.export_minio_key && (
                     <>
                       <Button size="sm" variant="secondary" onClick={() => window.open(api.exports.downloadUrl(exp.id), "_blank")}>Download</Button>
                       <ScheduleButton
                         exportId={exp.id}
-                        disabled={exp.export_status !== "done" || !exp.export_minio_key}
                         onScheduled={() => router.push("/scheduled")}
                       />
                     </>
