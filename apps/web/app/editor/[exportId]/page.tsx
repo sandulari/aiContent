@@ -438,14 +438,17 @@ export default function EditorPage() {
     setSaving(false);
   };
 
-  // Autosave: debounce 3s after any edit
+  // Autosave: debounce 3s after any edit. Paused while the export
+  // dialog is open — the render task reads the row at start, so an
+  // autosave landing between dispatch and pick-up could ship the wrong
+  // state to the renderer.
   useEffect(() => {
-    if (!dirty) return;
+    if (!dirty || showExportDialog) return;
     const timer = setTimeout(() => {
       handleSave();
     }, 3000);
     return () => clearTimeout(timer);
-  }, [dirty, layers, textLayers, textLayerVisibility, trimStart, trimEnd, captionText, muted, volume, customAudioKey, customVolume, fadeIn, fadeOut]);
+  }, [dirty, showExportDialog, layers, textLayers, textLayerVisibility, trimStart, trimEnd, captionText, muted, volume, customAudioKey, customVolume, fadeIn, fadeOut]);
 
   // beforeunload guard — warn if user closes tab with unsaved changes
   useEffect(() => {

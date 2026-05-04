@@ -85,25 +85,44 @@ export function ExportDialog({ exportId, captionText, onClose }: ExportDialogPro
     }
   }, [exportId, stopPolling]);
 
+  // Filename validation matches the hint shown next to the input.
+  // Returns null if valid, an error message otherwise. Empty string is
+  // treated as valid (server falls back to export_<id>.mp4).
+  const validateFilename = useCallback((raw: string): string | null => {
+    const clean = raw.trim();
+    if (!clean) return null;
+    if (clean.length > 180) return "Filename must be 180 characters or fewer.";
+    if (!/^[\w\s-]+$/.test(clean))
+      return "Filename can only contain letters, numbers, spaces, dashes, underscores.";
+    return null;
+  }, []);
+
   // Persist the filename to the export row before kicking off a render
-  // or a download. No validation here — the backend sanitizes.
-  const persistFilename = useCallback(async () => {
+  // or a download. Returns true on success or no-op (empty), false on
+  // failure so callers can abort instead of shipping a stale name.
+  const persistFilename = useCallback(async (): Promise<boolean> => {
     const clean = filename.trim();
-    if (!clean) return;
+    if (!clean) return true;
     try {
       await api.exports.update(exportId, { download_filename: clean });
-    } catch {
-      // non-fatal — the download handler falls back to export_<id>.mp4
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save filename");
+      return false;
     }
   }, [exportId, filename]);
 
   const handleStartExport = async () => {
+    const fnErr = validateFilename(filename);
+    if (fnErr) {
+      setError(fnErr);
+      return;
+    }
+    setError(null);
+    if (!(await persistFilename())) return;
+
     setPhase("rendering");
     setProgress(0);
-    setError(null);
-
-    await persistFilename();
-
     try {
       await api.exports.render(exportId);
       pollRef.current = setInterval(pollStatus, 2000);
@@ -125,13 +144,30 @@ export function ExportDialog({ exportId, captionText, onClose }: ExportDialogPro
     }
   };
 
-  const handleCopyCaption = () => {
-    if (captionText) {
-      navigator.clipboard.writeText(captionText).then(() => {
-        setCaptionCopied(true);
-        setTimeout(() => setCaptionCopied(false), 2000);
-      });
+  const handleCopyCaption = async () => {
+    if (!captionText) return;
+    // navigator.clipboard rejects on non-https origins and on Safari
+    // permission denial. Fall back to execCommand so the button works
+    // everywhere instead of failing silently with an unhandled rejection.
+    try {
+      await navigator.clipboard.writeText(captionText);
+    } catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = captionText;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {
+        setError("Couldn't copy caption — copy manually from the Caption field.");
+        return;
+      }
     }
+    setCaptionCopied(true);
+    setTimeout(() => setCaptionCopied(false), 2000);
   };
 
   // The "go back and keep editing" action — available after a render
@@ -144,10 +180,16 @@ export function ExportDialog({ exportId, captionText, onClose }: ExportDialogPro
   const handleRender = async () => {
     // Re-render with whatever the current canvas state is. The user
     // hits this after they've made more edits and want a fresh MP4.
+    const fnErr = validateFilename(filename);
+    if (fnErr) {
+      setError(fnErr);
+      return;
+    }
+    setError(null);
+    if (!(await persistFilename())) return;
+
     setPhase("rendering");
     setProgress(0);
-    setError(null);
-    await persistFilename();
     try {
       await api.exports.render(exportId);
       pollRef.current = setInterval(pollStatus, 2000);

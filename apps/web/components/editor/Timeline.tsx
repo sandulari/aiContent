@@ -96,13 +96,21 @@ export function Timeline({
     [dragging, getTimeFromX, trimStart, trimEnd, duration, onSeek, onTrimChange]
   );
 
-  const handlePointerUp = useCallback(() => {
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
     setDragging(null);
+    // Explicit release in case the browser doesn't auto-release (esp.
+    // pointercancel paths or DOM detachment during a drag).
+    const el = e.target as HTMLElement;
+    if (el.hasPointerCapture && el.hasPointerCapture(e.pointerId)) {
+      try { el.releasePointerCapture(e.pointerId); } catch { /* swallow */ }
+    }
   }, []);
 
-  const trimStartPct = duration > 0 ? (trimStart / duration) * 100 : 0;
-  const trimEndPct = duration > 0 ? (trimEnd / duration) * 100 : 100;
-  const currentPct = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const trimStartPct = duration > 0 ? Math.max(0, Math.min(100, (trimStart / duration) * 100)) : 0;
+  const trimEndPct = duration > 0 ? Math.max(0, Math.min(100, (trimEnd / duration) * 100)) : 100;
+  // Clamp so a transient currentTime > duration (during reload / seek)
+  // doesn't render the playhead off the right edge of the track.
+  const currentPct = duration > 0 ? Math.max(0, Math.min(100, (currentTime / duration) * 100)) : 0;
 
   return (
     <div className="bg-surface border border-border rounded-lg px-4 py-3">
@@ -128,6 +136,7 @@ export function Timeline({
           className="relative flex-1 h-10 select-none cursor-pointer"
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
         >
           {/* Full track background */}
           <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-2 bg-border rounded-full" />

@@ -44,6 +44,14 @@ export function AITextPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bootstrapped = useRef(false);
+  // Mirror of `messages` so sendMessage doesn't read a stale snapshot
+  // from its closure on rapid sends. Without this, two clicks fired in
+  // the same tick would both compute `[...messages, userMsg]` from the
+  // same prior list, dropping the first user turn from history.
+  const messagesRef = useRef<ChatMsg[]>([]);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   // Autoscroll to the newest message
   useEffect(() => {
@@ -62,17 +70,20 @@ export function AITextPanel({
       if (!trimmed && !isInitial) return;
 
       const userMsg: ChatMsg = { role: "user", content: trimmed };
-      // Optimistically append the user turn. For the initial auto-kick
-      // we use a synthetic kickoff message so Claude has a prompt.
+      const kickoffMsg: ChatMsg = {
+        role: "user",
+        content:
+          "Analyze this reel and give me 3 headline options, 3 subtitles, and a caption tailored to my page's audience. Explain briefly what direction you picked.",
+      };
+      // Read the live messages from the ref (synced via effect) instead
+      // of the closure; this prevents two rapid sends from dropping the
+      // first user turn. Update the ref optimistically so a second send
+      // arriving before React commits the first still sees the appended
+      // turn.
       const nextMessages: ChatMsg[] = isInitial
-        ? [
-            {
-              role: "user",
-              content:
-                "Analyze this reel and give me 3 headline options, 3 subtitles, and a caption tailored to my page's audience. Explain briefly what direction you picked.",
-            },
-          ]
-        : [...messages, userMsg];
+        ? [kickoffMsg]
+        : [...messagesRef.current, userMsg];
+      messagesRef.current = nextMessages;
       setMessages(nextMessages);
       setInput("");
       setLoading(true);
@@ -95,7 +106,7 @@ export function AITextPanel({
           // Rollback the optimistic user message so the input box keeps
           // their text, and surface the error prominently.
           setMessages((prev) => prev.slice(0, -1));
-          setInput(userMsg.content || input);
+          setInput(userMsg.content);
           setError(
             "Claude bridge isn't running on your host. Start it with `bash infra/start_claude_bridge.sh` in a terminal, or install the persistent LaunchAgent with `bash infra/install_bridge_launchd.sh`."
           );
@@ -109,10 +120,11 @@ export function AITextPanel({
         }
       } catch (e: any) {
         setError(e?.message || "AI chat failed. Try again.");
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     },
-    [messages, reelId, userPageId, input]
+    [reelId, userPageId]
   );
 
   const retryLastMessage = useCallback(() => {

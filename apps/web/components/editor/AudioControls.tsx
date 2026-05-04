@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 
 interface AudioControlsProps {
@@ -59,11 +59,26 @@ export function AudioControls({
   onFadeOutToggle,
 }: AudioControlsProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+
+  // Audio cap: 50 MB. Reels are short — a 30s mp3/m4a is ~1 MB, a 60s
+  // wav is ~10 MB. Anything past 50 MB is almost always a wrong file.
+  // Bypassing this would tie up MinIO upload + bandwidth before the
+  // server's own size guard rejected.
+  const MAX_AUDIO_BYTES = 50 * 1024 * 1024;
+  const ALLOWED_AUDIO_TYPES = /^audio\//i;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFileError(null);
     const file = e.target.files?.[0];
     if (file) {
-      onAddAudio(file);
+      if (!ALLOWED_AUDIO_TYPES.test(file.type)) {
+        setFileError(`Unsupported file type: ${file.type || "unknown"}. Choose an audio file.`);
+      } else if (file.size > MAX_AUDIO_BYTES) {
+        setFileError(`File is ${Math.round(file.size / 1024 / 1024)} MB — limit is ${MAX_AUDIO_BYTES / 1024 / 1024} MB.`);
+      } else {
+        onAddAudio(file);
+      }
     }
     // Reset so the same file can be re-selected
     if (fileInputRef.current) {
@@ -130,6 +145,10 @@ export function AudioControls({
             className="hidden"
           />
         </div>
+
+        {fileError && (
+          <div className="px-3 pb-2 text-xs text-[#f87171]">{fileError}</div>
+        )}
 
         {/* Custom Audio Track */}
         {customAudioKey && (
