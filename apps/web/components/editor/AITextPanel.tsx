@@ -104,7 +104,10 @@ export function AITextPanel({
         if (isBridgeDown) {
           // Don't push a confusing assistant bubble AND an error banner.
           // Rollback the optimistic user message so the input box keeps
-          // their text, and surface the error prominently.
+          // their text, and surface the error prominently. Also pop
+          // from the ref so a retry click between this rollback and the
+          // next render doesn't re-send the bridge-down turn as history.
+          messagesRef.current = messagesRef.current.slice(0, -1);
           setMessages((prev) => prev.slice(0, -1));
           setInput(userMsg.content);
           setError(
@@ -116,6 +119,7 @@ export function AITextPanel({
             content: res.assistant_message || "(no text returned)",
             suggestions: res.suggestions,
           };
+          messagesRef.current = [...messagesRef.current, assistantMsg];
           setMessages((prev) => [...prev, assistantMsg]);
         }
       } catch (e: any) {
@@ -130,24 +134,24 @@ export function AITextPanel({
   const retryLastMessage = useCallback(() => {
     // Retry by re-sending the last user message. If the last message
     // was the auto-kickoff, re-trigger that instead.
-    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const lastUser = [...messagesRef.current].reverse().find((m) => m.role === "user");
     if (!lastUser) {
+      messagesRef.current = [];
       setMessages([]);
       bootstrapped.current = false;
       setTimeout(() => sendMessage("", true), 10);
       return;
     }
     // Drop the failed assistant turn (if any) and retry the user turn.
-    setMessages((prev) => {
-      const cut = [...prev];
-      while (cut.length && cut[cut.length - 1].role === "assistant") cut.pop();
-      // Also drop the user message we're about to re-send — sendMessage
-      // will re-append it.
-      if (cut.length && cut[cut.length - 1].role === "user") cut.pop();
-      return cut;
-    });
+    const cut = [...messagesRef.current];
+    while (cut.length && cut[cut.length - 1].role === "assistant") cut.pop();
+    // Also drop the user message we're about to re-send — sendMessage
+    // will re-append it.
+    if (cut.length && cut[cut.length - 1].role === "user") cut.pop();
+    messagesRef.current = cut;
+    setMessages(cut);
     setTimeout(() => sendMessage(lastUser.content, false), 50);
-  }, [messages, sendMessage]);
+  }, [sendMessage]);
 
   // Auto-kick an initial analysis when the panel opens for the first time
   useEffect(() => {
@@ -166,6 +170,7 @@ export function AITextPanel({
   };
 
   const resetChat = () => {
+    messagesRef.current = [];
     setMessages([]);
     bootstrapped.current = false;
     setError(null);
