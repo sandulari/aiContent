@@ -249,6 +249,39 @@ MIGRATION_STATEMENTS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_scheduled_reels_user_time
     ON scheduled_reels(user_id, scheduled_at)
     """,
+    # -----------------------------------------------------------------
+    # user_page_reels: backfill the (user_page_id, ig_code) UNIQUE
+    # constraint. The CREATE TABLE block above declares it inline, but
+    # databases provisioned before that line was added never picked it
+    # up (CREATE TABLE IF NOT EXISTS doesn't alter existing tables).
+    # Without the constraint, the refresh-stats endpoint's
+    # INSERT...ON CONFLICT (user_page_id, ig_code) raises
+    # "no unique or exclusion constraint matching the ON CONFLICT
+    # specification". Dedupe first (keep one row per pair) so the ALTER
+    # doesn't fail on duplicate keys.
+    # -----------------------------------------------------------------
+    """
+    DELETE FROM user_page_reels a
+    USING user_page_reels b
+    WHERE a.user_page_id = b.user_page_id
+      AND a.ig_code = b.ig_code
+      AND a.ctid < b.ctid
+    """,
+    # DO block + EXCEPTION WHEN duplicate_object so re-running on a DB
+    # that already has the constraint (or any equivalent UNIQUE on the
+    # same column pair) doesn't poison the wrapping transaction. The
+    # migration runner runs all statements inside one engine.begin()
+    # transaction; a raw ALTER would leave subsequent migrations in
+    # "current transaction is aborted" state.
+    """
+    DO $$
+    BEGIN
+        ALTER TABLE user_page_reels
+        ADD CONSTRAINT user_page_reels_user_page_ig_code_key
+        UNIQUE (user_page_id, ig_code);
+    EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL;
+    END $$
+    """,
 ]
 
 
