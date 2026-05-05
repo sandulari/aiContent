@@ -108,7 +108,12 @@ services:
 
   worker-scraper:
     <<: *worker-common
-    command: celery -A celery_app worker -Q queue.scrape,queue.discover,queue.analyze -c 4 -E --loglevel=info
+    # queue.publish handles scheduled IG reel publishes — colocated here
+    # because it's the same network-bound profile as queue.analyze and
+    # the dedicated `worker-publish` container that beat assumed never
+    # actually existed; without this entry queue.publish has no consumer
+    # and tick_scheduled_reels piles up in Redis forever.
+    command: celery -A celery_app worker -Q queue.scrape,queue.discover,queue.analyze,queue.publish -c 4 -E --loglevel=info
 
   worker-downloader:
     <<: *worker-common
