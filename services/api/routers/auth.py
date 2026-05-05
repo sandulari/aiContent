@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import get_db
@@ -45,6 +46,7 @@ _AUTH_RL: dict[str, list[float]] = defaultdict(list)
 _AUTH_RL_WINDOW = 60        # seconds
 _AUTH_RL_LOGIN_MAX = 8      # /login attempts / IP / window
 _AUTH_RL_RESET_MAX = 5      # /forgot-password requests / IP / window
+_AUTH_RL_REGISTER_MAX = 5   # /register attempts / IP / window — caps signup spam
 
 
 def _client_ip(request: Request) -> str:
@@ -116,7 +118,13 @@ async def _issue_tokens(user: User, db: AsyncSession, response: Response) -> dic
 # ---------------------------------------------------------------------------
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-async def register(body: UserCreate, response: Response, db: AsyncSession = Depends(get_db)):
+async def register(
+    body: UserCreate,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    _check_auth_rate_limit(request, "register", _AUTH_RL_REGISTER_MAX)
     result = await db.execute(select(User).where(User.email == body.email))
     if result.scalar_one_or_none():
         raise HTTPException(
@@ -130,7 +138,17 @@ async def register(body: UserCreate, response: Response, db: AsyncSession = Depe
         role="user",
     )
     db.add(user)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # Race: another request inserted the same email between our
+        # existence check and INSERT. The DB UNIQUE constraint won the
+        # race; surface it as 409 instead of bubbling a 500.
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        )
 
     payload = await _issue_tokens(user, db, response)
 
