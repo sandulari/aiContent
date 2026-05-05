@@ -32,6 +32,7 @@ app.conf.update(
         "tasks.seed_default_template.*": {"queue": "queue.analyze"},
         "tasks.publish_scheduled_reel.*": {"queue": "queue.publish"},
         "tasks.auto_discover.*": {"queue": "queue.discover"},
+        "tasks.cleanup_jobs.*": {"queue": "queue.analyze"},
     },
     beat_schedule={
         # Keep the viral_reels pool fresh on every confirmed theme page.
@@ -74,6 +75,13 @@ app.conf.update(
             "schedule": crontab(minute="*/15"),
             "options": {"queue": "queue.publish"},
         },
+        # Reap rows in jobs.running that exceeded their plausible runtime
+        # — covers worker SIGKILL where except handlers never ran.
+        "reap-stuck-jobs": {
+            "task": "tasks.cleanup_jobs.reap_stuck_jobs",
+            "schedule": crontab(minute="*/30"),
+            "options": {"queue": "queue.analyze"},
+        },
     },
 )
 
@@ -91,3 +99,4 @@ import tasks.deep_discovery  # noqa: F401, E402
 import tasks.seed_default_template  # noqa: F401, E402
 import tasks.publish_scheduled_reel  # noqa: F401, E402
 import tasks.auto_discover  # noqa: F401, E402
+import tasks.cleanup_jobs  # noqa: F401, E402
