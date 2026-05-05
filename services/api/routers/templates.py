@@ -1,4 +1,5 @@
 """User templates — CRUD + logo upload."""
+import logging
 from io import BytesIO
 from typing import Any, Dict, List
 from uuid import UUID, uuid4
@@ -13,8 +14,15 @@ from models.user_export import UserExport
 from models.user_template import UserTemplate
 from services.minio_helper import get_minio_client
 
+logger = logging.getLogger(__name__)
+
 MAX_LOGO_BYTES = 5 * 1024 * 1024  # 5 MB
 _ALLOWED_LOGO_EXT = {"png", "jpg", "jpeg", "webp", "svg"}
+
+# Defensive ceiling on the unpaginated list endpoint — see exports.py for
+# the same pattern. Templates are reusable so per-user counts stay small;
+# 500 is well above any realistic user.
+_MAX_TEMPLATES_LIST = 500
 
 router = APIRouter(prefix="/api/templates", tags=["templates"])
 LOGOS_BUCKET = "logos"
@@ -102,8 +110,16 @@ class TemplateUpdateRequest(BaseModel):
 
 @router.get("")
 async def list_templates(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(UserTemplate).where(UserTemplate.user_id == current_user.id).order_by(UserTemplate.created_at.desc()))
-    return [_tpl_dict(t) for t in result.scalars().all()]
+    result = await db.execute(
+        select(UserTemplate)
+        .where(UserTemplate.user_id == current_user.id)
+        .order_by(UserTemplate.created_at.desc())
+        .limit(_MAX_TEMPLATES_LIST)
+    )
+    rows = result.scalars().all()
+    if len(rows) == _MAX_TEMPLATES_LIST:
+        logger.warning("list_templates cap hit: user=%s returned %d rows", current_user.id, _MAX_TEMPLATES_LIST)
+    return [_tpl_dict(t) for t in rows]
 
 
 @router.get("/{template_id}")

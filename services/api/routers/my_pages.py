@@ -25,6 +25,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/my-pages", tags=["my-pages"])
 
 
+# Defensive ceiling on the unpaginated list endpoint — see exports.py for
+# the same pattern. Real users connect on the order of 1–10 pages each;
+# 500 is far above any plausible legitimate use.
+_MAX_PAGES_LIST = 500
+
+
 PageType = Literal["own", "reference"]
 
 
@@ -137,10 +143,12 @@ async def list_my_pages(
     stmt = select(UserPage).where(UserPage.user_id == current_user.id)
     if page_type:
         stmt = stmt.where(UserPage.page_type == page_type)
-    stmt = stmt.order_by(UserPage.created_at.desc())
+    stmt = stmt.order_by(UserPage.created_at.desc()).limit(_MAX_PAGES_LIST)
 
     result = await db.execute(stmt)
     pages = result.scalars().all()
+    if len(pages) == _MAX_PAGES_LIST:
+        logger.warning("list_my_pages cap hit: user=%s returned %d rows", current_user.id, _MAX_PAGES_LIST)
 
     # Batch-load the latest PageProfile for every page in one query
     page_ids = [p.id for p in pages]

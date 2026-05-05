@@ -28,6 +28,13 @@ def _strip_html(text: str | None) -> str | None:
 
 router = APIRouter(prefix="/api/exports", tags=["exports"])
 
+# Defensive ceiling on the unpaginated list endpoint. The Library page
+# polls /api/exports every 15 s, so a user with thousands of exports
+# would otherwise serialize the whole table on every tick. Cap is well
+# above any realistic user; if we see the WARN log fire, swap this for
+# a real paginated response.
+_MAX_EXPORTS_LIST = 1000
+
 LOGOS_BUCKET = "logos"
 MAX_LOGO_BYTES = 5 * 1024 * 1024
 _ALLOWED_LOGO_EXT = {"png", "jpg", "jpeg", "webp", "svg"}
@@ -155,8 +162,16 @@ class ExportUpdateRequest(BaseModel):
 
 @router.get("")
 async def list_exports(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(UserExport).where(UserExport.user_id == current_user.id).order_by(UserExport.created_at.desc()))
-    return [_export_to_dict(e) for e in result.scalars().all()]
+    result = await db.execute(
+        select(UserExport)
+        .where(UserExport.user_id == current_user.id)
+        .order_by(UserExport.created_at.desc())
+        .limit(_MAX_EXPORTS_LIST)
+    )
+    rows = result.scalars().all()
+    if len(rows) == _MAX_EXPORTS_LIST:
+        logger.warning("list_exports cap hit: user=%s returned %d rows", current_user.id, _MAX_EXPORTS_LIST)
+    return [_export_to_dict(e) for e in rows]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
