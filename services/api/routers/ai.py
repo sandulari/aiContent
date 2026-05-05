@@ -1,6 +1,9 @@
 """AI text generation — headlines, subtitles, captions."""
+import logging
 import time
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 from typing import List, Literal
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
@@ -179,8 +182,12 @@ async def chat_endpoint(
             page_audience=audience,
             page_topics=topics,
         )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI chat failed: {str(e)[:200]}")
+    except Exception:
+        # Anthropic / network errors can include API keys, header dumps,
+        # or stack frames — log them server-side, give the client a
+        # generic 502 so we never echo provider internals back over HTTP.
+        logger.warning("chat_with_claude failed for user=%s", current_user.id, exc_info=True)
+        raise HTTPException(status_code=502, detail="AI chat is temporarily unavailable")
 
     return {
         "assistant_message": result.get("assistant_message", ""),

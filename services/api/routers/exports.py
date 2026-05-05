@@ -1,8 +1,11 @@
 """User exports — create, update, render, download."""
+import logging
 import re as _re
 from io import BytesIO
 from typing import Any, Dict, List
 from uuid import UUID, uuid4
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -523,8 +526,10 @@ async def download_export(
                 "Content-Disposition": f'attachment; filename="{filename}"',
             },
         )
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"File not accessible: {e}")
+    except Exception:
+        # Don't leak MinIO internals (bucket paths, S3 codes) — log + 404.
+        logger.warning("download_export: stream failed for %s/%s", bucket, key, exc_info=True)
+        raise HTTPException(status_code=404, detail="File not accessible")
 
 
 def _export_to_dict(e: UserExport) -> dict:
