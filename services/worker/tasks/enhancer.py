@@ -13,7 +13,7 @@ from sqlalchemy import text
 from celery_app import app
 from lib.db import get_session
 from lib.minio_client import download_file, upload_file
-from lib.video_proc import enhance_video, get_video_resolution, get_video_fps
+from lib.video_proc import enhance_video, get_video_resolution, get_video_fps, get_video_duration
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,7 @@ def enhance_video_task(self, reel_id: str):
         enhanced_path = enhance_video(local_path, reel_id)
         enhanced_resolution = get_video_resolution(enhanced_path) or ""
         enhanced_fps = get_video_fps(enhanced_path) or 0.0
+        enhanced_duration = get_video_duration(enhanced_path)
         enhanced_size = os.path.getsize(enhanced_path)
 
         enhanced_key = f"{reel_id}/{reel_id}_enhanced.mp4"
@@ -116,7 +117,7 @@ def enhance_video_task(self, reel_id: str):
                     "minio_bucket": VIDEOS_BUCKET,
                     "minio_key": enhanced_key,
                     "resolution": enhanced_resolution,
-                    "duration_seconds": 0.0,
+                    "duration_seconds": enhanced_duration,
                     "file_size_bytes": enhanced_size,
                     "created_at": datetime.now(timezone.utc),
                 },

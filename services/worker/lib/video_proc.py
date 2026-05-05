@@ -40,6 +40,31 @@ def get_video_fps(path: str) -> float:
     return 30.0
 
 
+def get_video_duration(path: str) -> float:
+    """Get the duration of a video file in seconds.
+
+    Uses ffprobe's -show_format for the container-level duration, which is
+    more reliable than stream-level duration (the latter can be missing
+    for some encodings, e.g. certain Real-ESRGAN outputs).
+    """
+    cmd = [
+        "ffprobe",
+        "-v", "quiet",
+        "-print_format", "json",
+        "-show_format",
+        path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
+        data = json.loads(result.stdout)
+        dur = data.get("format", {}).get("duration")
+        if dur is not None:
+            return float(dur)
+    except Exception as exc:
+        logger.warning("Failed to get duration for %s: %s", path, exc)
+    return 0.0
+
+
 def get_video_resolution(path: str) -> str:
     """Get the resolution of a video file as 'WIDTHxHEIGHT'."""
     cmd = [
