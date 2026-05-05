@@ -422,12 +422,18 @@ def _profile_reels_with_claude(reels: list[dict]) -> int:
             # Check in batches to avoid query size limits
             for i in range(0, len(reel_ids), 100):
                 batch_ids = reel_ids[i:i + 100]
+                # Hand psycopg2 uuid.UUID objects (not strings) so the list
+                # round-trips as uuid[]. SQLAlchemy's text() compiler also
+                # mishandles the `::uuid[]` cast (it sees `:uuid` as a
+                # second bind param), so we skip the SQL cast entirely.
+                from uuid import UUID
+                uuid_batch = [UUID(s) if isinstance(s, str) else s for s in batch_ids]
                 rows = session.execute(
                     text("""
                         SELECT viral_reel_id::text FROM reel_profiles
-                        WHERE viral_reel_id = ANY(:ids::uuid[])
+                        WHERE viral_reel_id = ANY(:ids)
                     """),
-                    {"ids": batch_ids},
+                    {"ids": uuid_batch},
                 ).fetchall()
                 already_profiled.update(str(r.viral_reel_id) for r in rows)
 

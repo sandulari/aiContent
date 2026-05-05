@@ -35,9 +35,38 @@ def scrape_all_active_pages(self):
         raise self.retry(exc=exc, countdown=60)
 
 
+def _mark_scrape_job_failed(job_id: str | None, error: str) -> None:
+    """Best-effort terminal-state update for a leaked 'running' job row.
+
+    Without this the row stays 'running' forever — see the April-May 2026
+    backlog of 150+ stuck rows that motivated this. Wrapped in its own
+    try/except so a DB hiccup during cleanup never masks the real error
+    we're about to re-raise.
+    """
+    if not job_id:
+        return
+    try:
+        with get_session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE jobs
+                    SET status = 'failed', finished_at = :now,
+                        attempts = attempts + 1,
+                        logs = jsonb_build_object('error', :error)
+                    WHERE id = :id AND status = 'running'
+                    """
+                ),
+                {"id": job_id, "now": datetime.now(timezone.utc), "error": error[:1000]},
+            )
+    except Exception as exc:
+        logger.warning("Failed to mark scrape job %s as failed: %s", job_id, exc)
+
+
 @app.task(name="tasks.scraper.scrape_page", bind=True, max_retries=3)
 def scrape_page(self, page_id: str):
     """Scrape one theme page for viral reels."""
+    job_id: str | None = None
     try:
         with get_session() as session:
             page = session.execute(
@@ -102,4 +131,5 @@ def scrape_page(self, page_id: str):
 
     except Exception as exc:
         logger.error("scrape_page failed for %s: %s", page_id, exc)
+        _mark_scrape_job_failed(job_id, str(exc))
         raise self.retry(exc=exc, countdown=120)

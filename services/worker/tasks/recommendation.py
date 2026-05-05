@@ -379,7 +379,11 @@ def _generate_for_page(user_page_id: str) -> dict:
             """),
             {"niche": niche_name.lower() if niche_name else "business"},
         ).fetchall()
-        niche_ids = [str(r.id) for r in niche_ids_result] if niche_ids_result else []
+        # Keep these as uuid.UUID objects (not str) — psycopg2 adapts a
+        # list of UUIDs into a uuid[] array natively. Casting them to str
+        # produces a text[] that Postgres won't auto-coerce against a
+        # uuid column ("operator does not exist: uuid = text").
+        niche_ids = [r.id for r in niche_ids_result] if niche_ids_result else []
 
         candidates: list = []
         seen_ids: set[str] = set()
