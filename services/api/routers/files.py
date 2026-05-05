@@ -1,6 +1,9 @@
+import logging
 import os
 from io import BytesIO
 from uuid import UUID, uuid4
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -37,8 +40,11 @@ async def download_file(file_id: UUID, current_user: User = Depends(get_current_
                 "Content-Disposition": f'attachment; filename="{os.path.basename(vf.minio_key)}"',
             },
         )
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"File not accessible: {e}")
+    except Exception:
+        # Don't leak MinIO internals (bucket paths, S3 error codes) to
+        # callers — log the cause for ops, return a generic 404.
+        logger.warning("download_file: stream failed for %s/%s", vf.minio_bucket, vf.minio_key, exc_info=True)
+        raise HTTPException(status_code=404, detail="File not accessible")
 
 
 @router.get("/video/{video_id}/stream")
@@ -86,8 +92,9 @@ async def stream_video(video_id: UUID, current_user: User = Depends(get_current_
                 "X-Video-File-Type": vf.file_type or "",
             },
         )
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Video not accessible: {e}")
+    except Exception:
+        logger.warning("stream_video: stream failed for %s/%s", vf.minio_bucket, vf.minio_key, exc_info=True)
+        raise HTTPException(status_code=404, detail="Video not accessible")
 
 
 @router.get("/export-logo/{export_id}")
@@ -99,7 +106,15 @@ async def serve_export_logo(export_id: UUID, current_user: User = Depends(get_cu
     from models.user_export import UserExport
     from models.user_template import UserTemplate
 
-    exp_res = await db.execute(select(UserExport).where(UserExport.id == export_id))
+    # Scope the export to the caller — without this, any authenticated
+    # user can fetch any other user's logo by guessing/enumerating
+    # export ids. 404 (not 403) so we don't reveal which ids exist.
+    exp_res = await db.execute(
+        select(UserExport).where(
+            UserExport.id == export_id,
+            UserExport.user_id == current_user.id,
+        )
+    )
     exp = exp_res.scalar_one_or_none()
     if not exp:
         raise HTTPException(status_code=404, detail="Export not found")
@@ -107,7 +122,10 @@ async def serve_export_logo(export_id: UUID, current_user: User = Depends(get_cu
     key = exp.logo_override_key
     if not key and exp.template_id:
         tmpl_res = await db.execute(
-            select(UserTemplate).where(UserTemplate.id == exp.template_id)
+            select(UserTemplate).where(
+                UserTemplate.id == exp.template_id,
+                UserTemplate.user_id == current_user.id,
+            )
         )
         tmpl = tmpl_res.scalar_one_or_none()
         if tmpl:
@@ -136,15 +154,23 @@ async def serve_export_logo(export_id: UUID, current_user: User = Depends(get_cu
                 "Cross-Origin-Resource-Policy": "cross-origin",
             },
         )
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Logo not accessible: {e}")
+    except Exception:
+        logger.warning("serve_export_logo: stream failed for %s/%s", bucket, minio_key, exc_info=True)
+        raise HTTPException(status_code=404, detail="Logo not accessible")
 
 
 @router.get("/logo/{template_id}")
 async def serve_logo(template_id: UUID, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Serve the logo image for a template."""
     from models.user_template import UserTemplate
-    result = await db.execute(select(UserTemplate).where(UserTemplate.id == template_id))
+    # Caller-scoped lookup so one user can't fetch another's template logo
+    # by guessing template ids.
+    result = await db.execute(
+        select(UserTemplate).where(
+            UserTemplate.id == template_id,
+            UserTemplate.user_id == current_user.id,
+        )
+    )
     tmpl = result.scalar_one_or_none()
     if not tmpl or not tmpl.logo_minio_key:
         raise HTTPException(status_code=404, detail="Logo not found")
@@ -157,8 +183,9 @@ async def serve_logo(template_id: UUID, current_user: User = Depends(get_current
         ext = key.rsplit(".", 1)[-1].lower() if "." in key else "png"
         ct = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "svg": "image/svg+xml"}.get(ext, "image/png")
         return StreamingResponse(response.stream(8192), media_type=ct, headers={"Cache-Control": "public, max-age=3600"})
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Logo not accessible: {e}")
+    except Exception:
+        logger.warning("serve_logo: stream failed for %s/%s", bucket, key, exc_info=True)
+        raise HTTPException(status_code=404, detail="Logo not accessible")
 
 
 # 1×1 transparent PNG — served when the upstream IG CDN thumbnail is gone
@@ -309,11 +336,23 @@ async def upload_audio(
     if ext_raw not in _ALLOWED_AUDIO_EXT:
         raise HTTPException(status_code=400, detail="Unsupported audio format")
 
-    content = await file.read()
-    if len(content) > MAX_AUDIO_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Audio file too large (max 25 MB)")
-    if len(content) == 0:
+    # Stream-check the body so a multi-GB upload can't exhaust memory
+    # before being rejected. UploadFile.read() with no arg buffers the
+    # entire body; reading in chunks lets us short-circuit at the cap.
+    chunks: list[bytes] = []
+    total = 0
+    CHUNK = 64 * 1024
+    while True:
+        chunk = await file.read(CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_AUDIO_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Audio file too large (max 25 MB)")
+        chunks.append(chunk)
+    if total == 0:
         raise HTTPException(status_code=400, detail="Empty file")
+    content = b"".join(chunks)
 
     object_name = f"{current_user.id}/{uuid4().hex}.{ext_raw}"
 
