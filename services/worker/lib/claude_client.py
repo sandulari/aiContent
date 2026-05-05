@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 CLAUDE_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL_ANALYSIS", "claude-opus-4-20250514")
+# Cheap+fast model for the discovery reviewer pass — burned in volume
+# (~50 calls per discovery run), so paying Opus rates would be wasteful.
+CLAUDE_MODEL_REVIEWER = os.getenv("CLAUDE_MODEL_REVIEWER", "claude-haiku-4-5-20251001")
 CLAUDE_URL = "https://api.anthropic.com/v1/messages"
 
 _HEADERS = {
@@ -75,13 +78,18 @@ def _call_claude(
     max_tokens: int = 1200,
     temperature: float = 0.3,
     timeout: float = 45.0,
+    model: Optional[str] = None,
 ) -> Optional[str]:
-    """Raw API call with retry-on-429 and structured error logging."""
+    """Raw API call with retry-on-429 and structured error logging.
+
+    If `model` is None, defaults to CLAUDE_MODEL (the heavy analysis
+    model). Pass CLAUDE_MODEL_REVIEWER for the cheap fan-out reviewer.
+    """
     if not is_enabled():
         return None
 
     body = {
-        "model": CLAUDE_MODEL,
+        "model": model or CLAUDE_MODEL,
         "max_tokens": max_tokens,
         "temperature": temperature,
         "system": system,
@@ -521,3 +529,71 @@ JSON only."""
             }
 
     return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 6. Per-reel match reviewer (cheap fan-out for discovery)
+# ══════════════════════════════════════════════════════════════════════
+
+_REVIEWER_SYSTEM = (
+    "You are a thoughtful Instagram brand strategist. Given a creator's "
+    "brand profile and one candidate viral reel, decide whether the reel "
+    "is a good fit to repost on the creator's account. Score 0–10 and "
+    "give one specific reason. A 'dog video' on a business account is a "
+    "1; on-niche content with clear angle is 8+. Always return valid "
+    "JSON with shape {\"score\": <int 0-10>, \"reason\": \"<≤120 chars>\"} "
+    "and nothing else."
+)
+
+
+def review_reel_match(
+    user_brand_profile: dict,
+    reel: dict,
+) -> Optional[dict]:
+    """Single-reel match review using Haiku. Returns {score, reason} or None on failure.
+
+    `user_brand_profile` is a dict assembled by the caller from niche tags,
+    own page profile (if any), and reference-page profiles. `reel` is a
+    dict with caption, view_count, source_username, duration_seconds.
+    """
+    # Build the prompt as compact JSON to keep token count low — Haiku
+    # is cheap but we're calling it 50× per discovery run.
+    prompt = (
+        "Brand profile:\n"
+        f"  niche: {user_brand_profile.get('niche', 'unknown')}\n"
+        f"  niche_tags: {user_brand_profile.get('niche_tags', [])[:6]}\n"
+        f"  reference_pages: {user_brand_profile.get('reference_pages', [])[:5]}\n"
+        f"  audience: {user_brand_profile.get('audience', 'unknown')}\n"
+        f"  voice: {user_brand_profile.get('voice', 'unknown')}\n"
+        "\nCandidate reel:\n"
+        f"  caption: {(reel.get('caption') or '')[:400]}\n"
+        f"  source_page: @{reel.get('source_username', '')}\n"
+        f"  view_count: {reel.get('view_count', 0):,}\n"
+        f"  duration_seconds: {reel.get('duration_seconds', 0)}\n"
+        f"  topic_tag: {reel.get('topic') or '—'}\n"
+        "\nReturn JSON only: {\"score\": 0-10, \"reason\": \"≤120 chars\"}"
+    )
+
+    raw = _call_claude(
+        system=_REVIEWER_SYSTEM,
+        user_prompt=prompt,
+        max_tokens=200,
+        temperature=0.1,
+        timeout=20.0,
+        model=CLAUDE_MODEL_REVIEWER,
+    )
+    if not raw:
+        return None
+
+    parsed = _extract_json(raw)
+    if not isinstance(parsed, dict):
+        return None
+
+    try:
+        score = int(parsed.get("score", 0))
+    except (TypeError, ValueError):
+        return None
+    score = max(0, min(10, score))
+
+    reason = (parsed.get("reason") or "").strip()[:140]
+    return {"score": score, "reason": reason}

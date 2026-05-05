@@ -633,6 +633,130 @@ def _filter_to_downloadable(
     return filtered
 
 
+def _claude_review_pass(
+    final_recs: list[tuple[float, Any]],
+    user_niche_tags: list[str],
+    reference_profiles: list[dict],
+) -> tuple[list[tuple[float, Any]], dict[str, dict]]:
+    """Run Claude Haiku as a "thoughtful brand strategist" over top candidates.
+
+    The 5-axis score gets us 80% of the way there; this pass catches the
+    edge cases the math misses (a quote-on-music video that has the right
+    keywords but obviously wrong format; a reel from an adjacent niche
+    that scores high but feels off-brand).
+
+    Drops anything with score < 6/10. Returns the filtered list AND a
+    map from reel_id → {claude_score, claude_reason} so the caller can
+    persist Claude's reasoning into match_reason / match_score.
+
+    On total Claude API outage, returns final_recs unchanged + empty map
+    — caller falls back to score-only ranking.
+    """
+    if not final_recs:
+        return final_recs, {}
+
+    # Late import — keeps deep_discovery importable even if claude_client
+    # has a transient issue.
+    from lib.claude_client import review_reel_match, is_enabled as claude_is_enabled
+
+    if not claude_is_enabled():
+        logger.info("Claude reviewer pass skipped (CLAUDE_API_KEY not configured)")
+        return final_recs, {}
+
+    # Cap the reviewer to the top 50 — anything below that won't appear
+    # in the user's first scroll anyway, and Claude calls cost money.
+    top = final_recs[:50]
+    rest = final_recs[50:]
+
+    # Build the brand profile once.
+    primary_niche = ""
+    if reference_profiles:
+        primary_niche = reference_profiles[0].get("niche_primary", "") or ""
+    if not primary_niche and user_niche_tags:
+        primary_niche = user_niche_tags[0]
+
+    ref_descriptors: list[str] = []
+    for prof in reference_profiles[:5]:
+        np_ = prof.get("niche_primary", "") or "?"
+        topics = prof.get("top_topics") or []
+        topic_str = ", ".join(topics[:3]) if isinstance(topics, list) else ""
+        ref_descriptors.append(f"{np_} ({topic_str})" if topic_str else np_)
+
+    brand_profile = {
+        "niche": primary_niche or "general creator",
+        "niche_tags": list(user_niche_tags)[:8],
+        "reference_pages": ref_descriptors,
+    }
+
+    # Fan out — Haiku is fast, but 50 sequential calls would still be ~75s.
+    # 8 in parallel keeps wall-time under ~12s.
+    review_map: dict[str, dict] = {}
+
+    def _review_one(score_reel: tuple[float, Any]) -> tuple[str, dict | None]:
+        _, reel = score_reel
+        reel_payload = {
+            "caption": getattr(reel, "caption", "") or "",
+            "view_count": int(getattr(reel, "view_count", 0) or 0),
+            "source_username": getattr(reel, "source_username", "") or "",
+            "duration_seconds": int(getattr(reel, "duration_seconds", 0) or 0),
+            "topic": getattr(reel, "topic", None),
+        }
+        try:
+            return str(reel.id), review_reel_match(brand_profile, reel_payload)
+        except Exception as exc:
+            logger.warning("Claude reviewer failed for reel %s: %s", reel.id, exc)
+            return str(reel.id), None
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(_review_one, sr) for sr in top]
+        for fut in as_completed(futures, timeout=180):
+            try:
+                rid, review = fut.result()
+            except Exception:
+                continue
+            if review is not None:
+                review_map[rid] = review
+
+    # If Claude reviewed nothing (total outage), fall back to score-only.
+    if not review_map:
+        logger.warning(
+            "Claude reviewer pass returned zero results for %d candidates — "
+            "falling back to score-only ranking",
+            len(top),
+        )
+        return final_recs, {}
+
+    # Filter top-50 by Claude's score; keep the long tail (rest) untouched
+    # since it wasn't reviewed and we don't want to silently drop reels
+    # just because they were below the reviewer cap.
+    SCORE_FLOOR = 6
+    filtered_top: list[tuple[float, Any]] = []
+    dropped_low = 0
+    for score, reel in top:
+        rid = str(reel.id)
+        review = review_map.get(rid)
+        if review is None:
+            # Reviewer call failed for this one — keep it (don't penalize
+            # for our infra hiccup) but don't override its reason.
+            filtered_top.append((score, reel))
+            continue
+        if review["score"] < SCORE_FLOOR:
+            dropped_low += 1
+            continue
+        filtered_top.append((score, reel))
+
+    logger.info(
+        "Claude reviewer pass: %d top candidates → %d kept (%d below floor=%d, %d errored)",
+        len(top),
+        len(filtered_top),
+        dropped_low,
+        SCORE_FLOOR,
+        len(top) - len(review_map),
+    )
+
+    return filtered_top + rest, review_map
+
+
 def _build_enhanced_recommendations(
     user_page_id: str,
     user_niche_tags: list[str],
@@ -720,17 +844,23 @@ def _build_enhanced_recommendations(
             return {"inserted": 0, "pool_size": 0}
 
         # Score each reel
+        # WEIGHTING NOTE: rebalanced post-launch — the previous formula gave
+        # 0.20 to view_performance which let "dog video with 50M views" beat
+        # "niche-fit reel with 200k views." Niche fit (caption + topic) now
+        # dominates; views still help break ties between equally-on-brand
+        # candidates. Total still sums to 1.00.
         scored: list[tuple[float, Any]] = []
         for r in rows:
             score = 0.0
 
-            # 1. Caption relevance (0-0.30)
+            # 1. Caption relevance (0-0.35) — was 0.30
             reel_words = tokenise(r.caption) if r.caption else set()
             overlap = len(reel_words & keywords)
             relevance = min(overlap / max(len(keywords), 1), 1.0)
-            score += relevance * 0.30
+            score += relevance * 0.35
 
-            # 2. Topic match (0-0.20) — Claude profile tags vs user niche tags
+            # 2. Topic match (0-0.25) — was 0.20. Claude-profiled tags
+            # are the strongest niche-fit signal we have.
             if r.profile_tags and niche_tag_tokens:
                 profile_tag_tokens = set()
                 for pt in (r.profile_tags if isinstance(r.profile_tags, list) else []):
@@ -740,24 +870,24 @@ def _build_enhanced_recommendations(
                     profile_tag_tokens.update(tokenise(r.topic))
                 topic_overlap = len(profile_tag_tokens & niche_tag_tokens)
                 topic_score = min(topic_overlap / max(len(niche_tag_tokens), 1), 1.0)
-                score += topic_score * 0.20
+                score += topic_score * 0.25
             elif r.caption and niche_tag_tokens:
-                # Fallback: match caption against niche tags
+                # Fallback when no Claude profile yet: caption-vs-niche.
                 caption_tokens = tokenise(r.caption)
                 fallback_overlap = len(caption_tokens & niche_tag_tokens)
-                score += min(fallback_overlap / max(len(niche_tag_tokens), 1), 1.0) * 0.10
+                score += min(fallback_overlap / max(len(niche_tag_tokens), 1), 1.0) * 0.12
 
-            # 3. View performance (0-0.20)
+            # 3. View performance (0-0.10) — was 0.20. Tie-breaker only.
             if r.view_count and r.view_count > 0:
                 view_score = min(math.log10(r.view_count) / 7, 1.0)
-                score += view_score * 0.20
+                score += view_score * 0.10
 
-            # 4. Engagement (0-0.15)
+            # 4. Engagement (0-0.15) — unchanged.
             if r.view_count and r.view_count > 0:
                 engagement = ((r.like_count or 0) + (r.comment_count or 0)) / r.view_count
                 score += min(engagement * 10, 1.0) * 0.15
 
-            # 5. Freshness (0-0.15)
+            # 5. Freshness (0-0.15) — unchanged.
             if r.posted_at:
                 try:
                     if r.posted_at.tzinfo is None:
@@ -793,14 +923,28 @@ def _build_enhanced_recommendations(
         # viral_reels so re-running discovery is cheap.
         final_recs = _filter_to_downloadable(final_recs, session)
 
+        # ── Step 5c: Claude reviewer pass ───────────────────────────
+        # The math gets us 80% of the way; Claude catches the edge cases
+        # (wrong format despite right keywords, off-brand despite right
+        # niche). Runs Haiku — ~$0.05 per discovery, ~10s wall time.
+        final_recs, review_map = _claude_review_pass(
+            final_recs, user_niche_tags, reference_profiles,
+        )
+
         # Insert recommendations
         inserted = 0
         for final_score, reel in final_recs:
             reel_words = tokenise(reel.caption) if reel.caption else set()
             matched_kw = sorted(reel_words & keywords)[:10]
 
+            # Prefer Claude's reason — it's a strategist's read on the fit
+            # ("Tutorial format matches your educational tone") vs. our
+            # heuristic ("Matches: skincare, glow, makeup — 200k views").
+            review = review_map.get(str(reel.id))
             views_str = f"{reel.view_count:,}" if reel.view_count else "0"
-            if matched_kw:
+            if review and review.get("reason"):
+                reason = review["reason"]
+            elif matched_kw:
                 reason = f"Matches: {', '.join(matched_kw[:3])} — {views_str} views"
             elif reel.topic:
                 reason = f"{reel.topic.title()} content — {views_str} views"

@@ -142,24 +142,31 @@ def build_reference_keywords(own_profile: dict, ref_profiles: list[dict],
 def score_reel(caption: str | None, view_count: int, like_count: int,
                comment_count: int, posted_at: datetime | None,
                reference_keywords: set[str]) -> float:
-    """Score a candidate reel on four axes. Returns 0.0–1.0."""
+    """Score a candidate reel on four axes. Returns 0.0–1.0.
+
+    Rebalanced for launch: caption relevance now dominates (0.50, was
+    0.40) and view performance is a tie-breaker (0.15, was 0.30) so a
+    high-view off-niche reel can no longer beat a niche-fit reel with
+    moderate views. Engagement upweighted slightly (0.20, was 0.15)
+    because high engagement-rate is itself a niche-fit signal.
+    """
     score = 0.0
 
-    # 1. Caption relevance (0–0.4)
+    # 1. Caption relevance (0–0.50)
     reel_words = set(_tokenise(caption)) if caption else set()
     overlap = len(reel_words & reference_keywords)
     relevance = min(overlap / max(len(reference_keywords), 1), 1.0)
-    score += relevance * 0.4
+    score += relevance * 0.50
 
-    # 2. View performance (0–0.3) — log-scaled, 10M views = 1.0
+    # 2. View performance (0–0.15) — log-scaled, 10M views = 1.0
     if view_count and view_count > 0:
         view_score = min(math.log10(view_count) / 7, 1.0)
-        score += view_score * 0.3
+        score += view_score * 0.15
 
-    # 3. Engagement ratio (0–0.15) — 10% engagement = max
+    # 3. Engagement ratio (0–0.20) — 10% engagement = max
     if view_count and view_count > 0:
         engagement = ((like_count or 0) + (comment_count or 0)) / view_count
-        score += min(engagement * 10, 1.0) * 0.15
+        score += min(engagement * 10, 1.0) * 0.20
 
     # 4. Freshness (0–0.15) — linear decay over 90 days
     if posted_at:
