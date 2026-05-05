@@ -451,6 +451,13 @@ def _generate_for_page(user_page_id: str) -> dict:
             if len(final_recs) >= target_recs:
                 break
 
+        # ── 8b. Downloadability gate ────────────────────────────
+        # Same gate as deep_discovery — never recommend a reel we can't
+        # pull from another source. Imported lazily so this module's
+        # import isn't dependent on deep_discovery being loaded.
+        from tasks.deep_discovery import _filter_to_downloadable
+        final_recs = _filter_to_downloadable(final_recs, session)
+
         # ── 9. Insert recommendations ───────────────────────────
         inserted = 0
         for final_score, reel in final_recs:

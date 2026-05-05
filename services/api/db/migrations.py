@@ -282,6 +282,25 @@ MIGRATION_STATEMENTS: list[str] = [
     EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL;
     END $$
     """,
+    # viral_reels.is_downloadable + source_check_at: discovery-time gate
+    # that prevents recommending reels we can't pull from any other source.
+    # NULL = not yet probed; the discovery worker probes top candidates
+    # synchronously and updates these columns. 7-day re-check is enforced
+    # in deep_discovery._filter_to_downloadable.
+    """
+    ALTER TABLE viral_reels
+    ADD COLUMN IF NOT EXISTS is_downloadable BOOLEAN
+    """,
+    """
+    ALTER TABLE viral_reels
+    ADD COLUMN IF NOT EXISTS source_check_at TIMESTAMPTZ
+    """,
+    # Partial index — most queries only care about downloadable ones, and
+    # leaving NULL/false rows out keeps the index small.
+    """
+    CREATE INDEX IF NOT EXISTS idx_viral_reels_downloadable
+    ON viral_reels (id) WHERE is_downloadable = TRUE
+    """,
 ]
 
 

@@ -15,7 +15,8 @@ import os
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -498,6 +499,140 @@ def _profile_reels_with_claude(reels: list[dict]) -> int:
     return stored
 
 
+# ---------------------------------------------------------------------------
+# Downloadability gate
+# ---------------------------------------------------------------------------
+
+# Reels probed earlier than this many days ago are trusted; older results
+# get re-probed because YouTube takedowns / regional unavailability shift
+# over time.
+_DOWNLOADABILITY_RECHECK_DAYS = 7
+
+# Cap how many top candidates we probe per discovery run. Beauty/IG-
+# native niches have a low cross-platform match rate (~13% on test
+# data), so we need to probe widely to surface enough downloadable
+# reels for the UI. 250 covers most users' final_recs after page
+# diversification; cron jobs that build 500-row recs lists are still
+# bounded.
+_DOWNLOADABILITY_PROBE_TOP_N = 250
+
+# Parallelism for the YouTube probe. Each probe does one HTTP request,
+# so 12 concurrent stays well under YouTube's per-IP rate limit and
+# finishes 250 reels in ~40s with two-query lookups.
+_DOWNLOADABILITY_PROBE_WORKERS = 12
+
+
+def _filter_to_downloadable(
+    recs: list[tuple[float, Any]],
+    session,
+) -> list[tuple[float, Any]]:
+    """Drop recommendations whose source video can't be found anywhere.
+
+    The biggest UX bug in the previous version: recommendations surfaced
+    reels that, when clicked, had no downloadable source on YouTube /
+    TikTok. Repurpose.io's killer feature is precisely this gate — if we
+    can't pull it, never show it. Now caches the result on viral_reels so
+    a second discovery run for the same content costs zero HTTP calls.
+    """
+    if not recs:
+        return recs
+
+    # Step 1: load cached probe state for every candidate.
+    reel_ids = [str(r[1].id) for r in recs]
+    state_rows = session.execute(
+        text(
+            """
+            SELECT id::text AS id, is_downloadable, source_check_at
+            FROM viral_reels
+            WHERE id = ANY(:ids)
+            """
+        ),
+        {"ids": [uuid.UUID(rid) for rid in reel_ids]},
+    ).fetchall()
+    state: dict[str, tuple[bool | None, datetime | None]] = {
+        r.id: (r.is_downloadable, r.source_check_at) for r in state_rows
+    }
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_DOWNLOADABILITY_RECHECK_DAYS)
+
+    # Step 2: split into "use cached state" vs "needs re-probe". Only the
+    # top N by score get probed if uncached; the long tail is ignored
+    # because it almost certainly won't appear in the user's view anyway.
+    top_recs = recs[:_DOWNLOADABILITY_PROBE_TOP_N]
+    to_probe: list[Any] = []
+    for _, reel in top_recs:
+        rid = str(reel.id)
+        is_dl, checked_at = state.get(rid, (None, None))
+        if is_dl is True and checked_at and checked_at >= cutoff:
+            continue  # Cached as downloadable, fresh enough.
+        if is_dl is False and checked_at and checked_at >= cutoff:
+            continue  # Cached as undownloadable, fresh enough — skip probe.
+        to_probe.append(reel)
+
+    # Step 3: probe in parallel. Late import — the worker that runs
+    # deep_discovery may not load source_search at module import time.
+    from tasks.source_search import quick_downloadability_probe
+
+    probe_results: dict[str, bool] = {}
+    if to_probe:
+        with ThreadPoolExecutor(max_workers=_DOWNLOADABILITY_PROBE_WORKERS) as pool:
+            futures = {
+                pool.submit(
+                    quick_downloadability_probe,
+                    getattr(reel, "caption", "") or "",
+                    float(getattr(reel, "duration_seconds", 0) or 0),
+                    getattr(reel, "source_username", "") or "",
+                ): str(reel.id)
+                for reel in to_probe
+            }
+            # 120s ceiling for the whole batch — 100 reels × 2s / 8 workers
+            # = ~25s typical, with wide margin for slow YouTube responses.
+            for fut in as_completed(futures, timeout=120):
+                rid = futures[fut]
+                try:
+                    probe_results[rid] = bool(fut.result())
+                except Exception as exc:
+                    logger.warning("Downloadability probe failed for %s: %s", rid, exc)
+                    probe_results[rid] = False
+
+        # Persist probe results so the next discovery run reuses them.
+        now = datetime.now(timezone.utc)
+        for rid, is_dl in probe_results.items():
+            session.execute(
+                text(
+                    """
+                    UPDATE viral_reels
+                    SET is_downloadable = :dl, source_check_at = :now
+                    WHERE id = :id
+                    """
+                ),
+                {"dl": is_dl, "now": now, "id": uuid.UUID(rid)},
+            )
+
+    # Step 4: assemble the allowed set — anything probed True OR cached
+    # True from earlier runs.
+    allowed: set[str] = set()
+    for _, reel in recs:
+        rid = str(reel.id)
+        if rid in probe_results:
+            if probe_results[rid]:
+                allowed.add(rid)
+        else:
+            cached_dl, _ = state.get(rid, (None, None))
+            if cached_dl:
+                allowed.add(rid)
+
+    filtered = [(s, r) for (s, r) in recs if str(r.id) in allowed]
+    logger.info(
+        "Downloadability gate: %d candidates → %d kept (probed=%d, cached=%d)",
+        len(recs),
+        len(filtered),
+        len(to_probe),
+        len(recs) - len(to_probe),
+    )
+    return filtered
+
+
 def _build_enhanced_recommendations(
     user_page_id: str,
     user_niche_tags: list[str],
@@ -651,6 +786,12 @@ def _build_enhanced_recommendations(
             page_counts[page_id] += 1
             if len(final_recs) >= target_recs:
                 break
+
+        # ── Step 5b: Downloadability gate ───────────────────────────
+        # Drop any reel we can't pull from YouTube/etc. — saves the user
+        # from clicking dead recommendations. Caches probe results on
+        # viral_reels so re-running discovery is cheap.
+        final_recs = _filter_to_downloadable(final_recs, session)
 
         # Insert recommendations
         inserted = 0

@@ -65,6 +65,15 @@ _STOPWORDS = {
 # Confidence threshold — stop searching once we find a candidate this good
 _HIGH_CONFIDENCE_THRESHOLD = 0.80
 
+# Lower threshold used by the discovery downloadability gate. The gate
+# only needs "plausible match exists" — full scoring happens later when
+# the user actually picks the reel and the heavy search_source task runs.
+# Empirically tuned: 0.50 returned ~5% pass rate on beauty-niche test data
+# because IG-native content rarely has identical YouTube captions; 0.40
+# captures matches where the YouTube uploader rephrased the caption but
+# the topic / duration still align.
+_GATE_CONFIDENCE_THRESHOLD = 0.40
+
 # ---------------------------------------------------------------------------
 # Query building
 # ---------------------------------------------------------------------------
@@ -497,6 +506,51 @@ def _search_google_video(query: str, max_results: int = 8) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Celery task
 # ---------------------------------------------------------------------------
+
+
+def quick_downloadability_probe(
+    caption: str,
+    duration: float,
+    page_username: str,
+) -> bool:
+    """Fast pre-flight check: is at least one plausible YouTube source likely?
+
+    Single HTTP query, ~1–2s. Used by deep_discovery to gate which reels
+    get surfaced in recommendations — never show a reel the user can't
+    actually pull. Lower confidence bar than the full search_source task
+    because the gate just needs "downloading is plausible," not
+    "definitely the same video."
+
+    Returns True if at least one YouTube result scores above the gate
+    threshold (~0.5 confidence), False if no plausible source found.
+    """
+    queries = _build_search_queries(caption, duration, page_username)
+    if not queries:
+        return False
+
+    # Try up to 2 queries — the first is usually an exact-phrase match
+    # (overly strict for IG-native content where YouTube uploaders
+    # paraphrase). The second tends to be the broader keyword version.
+    # Stops early on the first plausible hit.
+    for q in queries[:2]:
+        try:
+            results = _search_youtube_via_http(q, max_results=5)
+        except Exception:
+            # Network blip / YouTube refusing — try the next query.
+            continue
+        for r in results:
+            try:
+                conf = _calculate_match_confidence(
+                    caption,
+                    duration,
+                    r.get("source_title", ""),
+                    r.get("duration", 0),
+                )
+            except Exception:
+                continue
+            if conf >= _GATE_CONFIDENCE_THRESHOLD:
+                return True
+    return False
 
 
 @app.task(name="tasks.source_search.search_source", bind=True, max_retries=2)
