@@ -64,29 +64,56 @@ def download_video_task(self, reel_id: str, source_id: str):
         source_type = source.source_type
         logger.info("Downloading from %s (%s)", source_url, source_type)
 
-        # Download with yt-dlp (fast, works for most platforms)
-        # Falls back to Playwright (headless browser) if yt-dlp is bot-blocked
+        # Download chain — try the most reliable path first, fall through
+        # on any failure. RapidAPI handles the IP-block dance YouTube /
+        # TikTok serve to datacenter IPs; yt-dlp is the free path that
+        # works for the easy cases; Playwright is the heavyweight last
+        # resort that uses a real browser session.
+        result = None
+
+        # 1. RapidAPI — primary, when configured. Returns None if no key
+        # is set, on rate limits, or any provider error.
         try:
-            result = download_video(source_url, video_id)
-        except Exception as ytdlp_err:
-            logger.warning("yt-dlp failed for %s, trying Playwright browser: %s", video_id, str(ytdlp_err)[:100])
-            from lib.playwright_dl import download_via_playwright
-            pw_result = download_via_playwright(source_url, video_id)
-            if pw_result:
-                # Convert Playwright result to match yt-dlp DownloadResult format
-                from lib.ytdlp import DownloadResult
-                result = DownloadResult(
-                    file_path=pw_result["file_path"],
-                    info_json_path="",
-                    resolution="",
-                    fps=0,
-                    codec="",
-                    bitrate=0,
-                    duration=pw_result.get("duration", 0),
-                    file_size=pw_result.get("file_size", 0),
+            from lib.rapidapi_dl import download_via_rapidapi, is_configured as _rapidapi_configured
+            if _rapidapi_configured():
+                result = download_via_rapidapi(source_url, video_id)
+                if result:
+                    logger.info("Download path: rapidapi for %s", video_id)
+        except Exception as rapidapi_err:
+            logger.warning(
+                "RapidAPI path errored, falling through: %s",
+                str(rapidapi_err)[:200],
+            )
+
+        # 2. yt-dlp — free, works on easy YouTube. Catches 403s + bot
+        # walls, falls through to Playwright. If RapidAPI already
+        # succeeded above, this whole block is skipped.
+        if result is None:
+            try:
+                result = download_video(source_url, video_id)
+                logger.info("Download path: yt-dlp for %s", video_id)
+            except Exception as ytdlp_err:
+                logger.warning(
+                    "yt-dlp failed for %s, trying Playwright browser: %s",
+                    video_id, str(ytdlp_err)[:100],
                 )
-            else:
-                raise ytdlp_err  # Both failed
+                from lib.playwright_dl import download_via_playwright
+                pw_result = download_via_playwright(source_url, video_id)
+                if pw_result:
+                    from lib.ytdlp import DownloadResult
+                    result = DownloadResult(
+                        file_path=pw_result["file_path"],
+                        info_json_path="",
+                        resolution="",
+                        fps=0,
+                        codec="",
+                        bitrate=0,
+                        duration=pw_result.get("duration", 0),
+                        file_size=pw_result.get("file_size", 0),
+                    )
+                    logger.info("Download path: playwright for %s", video_id)
+                else:
+                    raise ytdlp_err  # All three paths failed
 
         # Upload to MinIO
         minio_key = f"{video_id}/{os.path.basename(result.file_path)}"
