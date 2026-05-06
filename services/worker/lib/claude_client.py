@@ -25,6 +25,14 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL_ANALYSIS", "claude-opus-4-20250514")
 CLAUDE_MODEL_REVIEWER = os.getenv("CLAUDE_MODEL_REVIEWER", "claude-haiku-4-5-20251001")
 CLAUDE_URL = "https://api.anthropic.com/v1/messages"
 
+# Optional: route every Claude call through the host-side claude_bridge
+# (claude_bridge.py shells out to the user's `claude` CLI, which is
+# authenticated via their Claude Max subscription). When set, the bridge
+# is the primary path — falls back to the direct Anthropic API only if
+# the bridge is unreachable. Lets us call Claude in volume without
+# burning pay-per-call credits.
+CLAUDE_BRIDGE_URL = os.getenv("CLAUDE_BRIDGE_URL", "").rstrip("/")
+
 _HEADERS = {
     "x-api-key": CLAUDE_API_KEY,
     "anthropic-version": "2023-06-01",
@@ -33,7 +41,68 @@ _HEADERS = {
 
 
 def is_enabled() -> bool:
+    """True if any Claude path is usable (bridge or direct API)."""
+    if CLAUDE_BRIDGE_URL:
+        return True
     return bool(CLAUDE_API_KEY) and CLAUDE_API_KEY.startswith("sk-")
+
+
+def _model_to_bridge_short_name(model: Optional[str]) -> str:
+    """Map full Anthropic model IDs to the short names the `claude` CLI
+    accepts (`opus`, `sonnet`, `haiku`). The CLI is the single source of
+    truth for what's available on the user's subscription, so we don't
+    try to be cleverer than 'pick the family'."""
+    if not model:
+        return "sonnet"
+    m = model.lower()
+    if "haiku" in m:
+        return "haiku"
+    if "opus" in m:
+        return "opus"
+    if "sonnet" in m:
+        return "sonnet"
+    return "sonnet"
+
+
+def _call_via_bridge(
+    system: str,
+    user_prompt: str,
+    model: Optional[str],
+    timeout: float,
+) -> Optional[str]:
+    """POST to the host-side claude_bridge — uses the Claude CLI under
+    the hood, billed against the user's subscription. Returns the
+    assistant's text on success or None on any failure (network, bad
+    response, CLI error). Caller falls back to the direct API."""
+    bridge_short_model = _model_to_bridge_short_name(model)
+    payload = {
+        "system_prompt": system,
+        "messages": [{"role": "user", "content": user_prompt}],
+        "model": bridge_short_model,
+    }
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(f"{CLAUDE_BRIDGE_URL}/chat", json=payload)
+    except Exception as exc:
+        logger.warning("Claude bridge unreachable, will try direct API: %s", exc)
+        return None
+
+    if resp.status_code != 200:
+        logger.warning(
+            "Claude bridge HTTP %d: %s",
+            resp.status_code,
+            resp.text[:200] if resp.text else "",
+        )
+        return None
+    try:
+        data = resp.json()
+    except Exception:
+        return None
+    if not data.get("ok"):
+        logger.warning("Claude bridge error: %s", (data.get("error") or "")[:200])
+        return None
+    text = data.get("text") or ""
+    return text or None
 
 
 def _extract_json(text: str) -> Any:
@@ -77,15 +146,24 @@ def _call_claude(
     user_prompt: str,
     max_tokens: int = 1200,
     temperature: float = 0.3,
-    timeout: float = 45.0,
+    timeout: float = 120.0,
     model: Optional[str] = None,
 ) -> Optional[str]:
-    """Raw API call with retry-on-429 and structured error logging.
+    """Raw call to Claude. Prefers the host-side bridge when available,
+    falls back to the direct Anthropic API. Returns the assistant's text
+    or None on failure.
 
     If `model` is None, defaults to CLAUDE_MODEL (the heavy analysis
     model). Pass CLAUDE_MODEL_REVIEWER for the cheap fan-out reviewer.
     """
-    if not is_enabled():
+    # Bridge first — uses the user's subscription, no per-call cost.
+    if CLAUDE_BRIDGE_URL:
+        text = _call_via_bridge(system, user_prompt, model=model, timeout=timeout)
+        if text is not None:
+            return text
+        # Bridge failed (unreachable / CLI error) — fall through to API.
+
+    if not CLAUDE_API_KEY or not CLAUDE_API_KEY.startswith("sk-"):
         return None
 
     body = {
@@ -574,12 +652,17 @@ def review_reel_match(
         "\nReturn JSON only: {\"score\": 0-10, \"reason\": \"≤120 chars\"}"
     )
 
+    # 90s per-call timeout: bridge runs Claude CLI subprocesses with a
+    # default concurrency of 2, so when 25 calls fan out the tail of the
+    # batch waits ~60s for queueing + ~5s for the CLI itself. 20s would
+    # time most of them out; 90s gives wide margin without hanging if
+    # the bridge is genuinely down.
     raw = _call_claude(
         system=_REVIEWER_SYSTEM,
         user_prompt=prompt,
         max_tokens=200,
         temperature=0.1,
-        timeout=20.0,
+        timeout=90.0,
         model=CLAUDE_MODEL_REVIEWER,
     )
     if not raw:

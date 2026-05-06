@@ -4,6 +4,15 @@ x-worker-common: &worker-common
     dockerfile: Dockerfile
   env_file:
     - ../.env
+  environment:
+    # Workers route Claude calls through the host-side claude_bridge.py
+    # (authenticated via the user's Claude Max subscription) so the
+    # discovery reviewer + reel profiling don't burn pay-per-call API
+    # credits. Same setup the api service already uses.
+    CLAUDE_BRIDGE_URL: "http://host.docker.internal:7777"
+    CLAUDE_BRIDGE_MODEL: "sonnet"
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   depends_on:
     postgres:
       condition: service_healthy

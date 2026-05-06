@@ -638,120 +638,116 @@ def _claude_review_pass(
     user_niche_tags: list[str],
     reference_profiles: list[dict],
 ) -> tuple[list[tuple[float, Any]], dict[str, dict]]:
-    """Run Claude Haiku as a "thoughtful brand strategist" over top candidates.
+    """Run a single Claude batch-rank call over top candidates.
 
-    The 5-axis score gets us 80% of the way there; this pass catches the
-    edge cases the math misses (a quote-on-music video that has the right
-    keywords but obviously wrong format; a reel from an adjacent niche
-    that scores high but feels off-brand).
+    The 5-axis score gets us 80% of the way; this pass catches the edge
+    cases the math misses (quote-on-music videos with the right keywords
+    but wrong format, adjacent-niche reels that score high but feel
+    off-brand). Uses claude_client.rank_reels() — ONE batch call instead
+    of N parallel calls, so it stays well under the bridge's CLI
+    concurrency cap and the subscription's burst rate limit.
 
-    Drops anything with score < 6/10. Returns the filtered list AND a
-    map from reel_id → {claude_score, claude_reason} so the caller can
-    persist Claude's reasoning into match_reason / match_score.
-
-    On total Claude API outage, returns final_recs unchanged + empty map
-    — caller falls back to score-only ranking.
+    Drops anything with score < 0.6 (Claude scale 0.0–1.0). Returns the
+    filtered list + map from reel_id → {score, reason} for the caller's
+    insert step. On Claude failure, returns final_recs unchanged + empty
+    map; caller falls back to score-only ranking.
     """
     if not final_recs:
         return final_recs, {}
 
-    # Late import — keeps deep_discovery importable even if claude_client
-    # has a transient issue.
-    from lib.claude_client import review_reel_match, is_enabled as claude_is_enabled
+    from lib.claude_client import rank_reels, is_enabled as claude_is_enabled
 
     if not claude_is_enabled():
-        logger.info("Claude reviewer pass skipped (CLAUDE_API_KEY not configured)")
+        logger.info("Claude reviewer pass skipped (no API key and no bridge)")
         return final_recs, {}
 
-    # Cap the reviewer to the top 50 — anything below that won't appear
-    # in the user's first scroll anyway, and Claude calls cost money.
-    top = final_recs[:50]
-    rest = final_recs[50:]
+    # Top 25 — covers the user's first scroll. The batch ranker handles
+    # all 25 in a single Claude call, so size doesn't matter for cost.
+    top = final_recs[:25]
+    rest = final_recs[25:]
 
-    # Build the brand profile once.
+    # Build the target profile in the shape rank_reels expects.
     primary_niche = ""
     if reference_profiles:
         primary_niche = reference_profiles[0].get("niche_primary", "") or ""
     if not primary_niche and user_niche_tags:
         primary_niche = user_niche_tags[0]
 
-    ref_descriptors: list[str] = []
+    aggregated_topics: list[str] = []
+    aggregated_keywords: list[str] = []
     for prof in reference_profiles[:5]:
-        np_ = prof.get("niche_primary", "") or "?"
         topics = prof.get("top_topics") or []
-        topic_str = ", ".join(topics[:3]) if isinstance(topics, list) else ""
-        ref_descriptors.append(f"{np_} ({topic_str})" if topic_str else np_)
+        if isinstance(topics, list):
+            aggregated_topics.extend(t for t in topics if isinstance(t, str))
+        sig = prof.get("keyword_signature") or []
+        if isinstance(sig, list):
+            aggregated_keywords.extend(s for s in sig if isinstance(s, str))
 
-    brand_profile = {
-        "niche": primary_niche or "general creator",
-        "niche_tags": list(user_niche_tags)[:8],
-        "reference_pages": ref_descriptors,
+    target_profile = {
+        "niche_primary": primary_niche or "general creator",
+        "topics": list({t for t in aggregated_topics})[:10],
+        "keyword_signature": list({k for k in aggregated_keywords})[:20] or list(user_niche_tags)[:20],
+        "target_audience": "",  # not available in this scope; Claude infers from niche
     }
 
-    # Fan out — Haiku is fast, but 50 sequential calls would still be ~75s.
-    # 8 in parallel keeps wall-time under ~12s.
-    review_map: dict[str, dict] = {}
-
-    def _review_one(score_reel: tuple[float, Any]) -> tuple[str, dict | None]:
-        _, reel = score_reel
-        reel_payload = {
+    # Pack candidates in rank_reels's expected shape.
+    candidates: list[dict] = []
+    for _, reel in top:
+        candidates.append({
+            "id": str(reel.id),
             "caption": getattr(reel, "caption", "") or "",
-            "view_count": int(getattr(reel, "view_count", 0) or 0),
-            "source_username": getattr(reel, "source_username", "") or "",
-            "duration_seconds": int(getattr(reel, "duration_seconds", 0) or 0),
-            "topic": getattr(reel, "topic", None),
-        }
-        try:
-            return str(reel.id), review_reel_match(brand_profile, reel_payload)
-        except Exception as exc:
-            logger.warning("Claude reviewer failed for reel %s: %s", reel.id, exc)
-            return str(reel.id), None
+        })
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = [pool.submit(_review_one, sr) for sr in top]
-        for fut in as_completed(futures, timeout=180):
-            try:
-                rid, review = fut.result()
-            except Exception:
-                continue
-            if review is not None:
-                review_map[rid] = review
+    review_map: dict[str, dict] = {}
+    try:
+        # Single Claude call — defaults to claude_client's CLAUDE_MODEL
+        # (Sonnet via bridge), one round-trip ~10–15s. Avoids the burst
+        # rate limit that the per-reel fan-out version was tripping.
+        review_map = rank_reels(target_profile, candidates, batch_size=40) or {}
+    except Exception as exc:
+        logger.warning("Claude rank_reels failed: %s", exc)
+        review_map = {}
 
-    # If Claude reviewed nothing (total outage), fall back to score-only.
     if not review_map:
         logger.warning(
-            "Claude reviewer pass returned zero results for %d candidates — "
+            "Claude reviewer pass returned no results for %d candidates — "
             "falling back to score-only ranking",
             len(top),
         )
         return final_recs, {}
 
-    # Filter top-50 by Claude's score; keep the long tail (rest) untouched
-    # since it wasn't reviewed and we don't want to silently drop reels
-    # just because they were below the reviewer cap.
-    SCORE_FLOOR = 6
+    # 0.05 / 1.0 — extreme-mismatch guillotine only. Claude scores very
+    # conservatively (treats 1.0 as "literal exact-handle match"); even
+    # niche-aligned reels routinely land 0.2–0.4. Anything ≤ 0.05 is
+    # something Claude is genuinely confused by ("how is a fishing reel
+    # relevant to a beauty creator?") and is safe to drop. The 5-axis
+    # math + downloadability gate handle the real filtering. Claude's
+    # primary value in this pass is the *match_reason* it writes for the
+    # top recommendations — it turns "Trending in your niche — 200k
+    # views" into "Skincare-focused sunscreen ritual, perfect for skin
+    # niche." Big UX upgrade, no quality regression.
+    SCORE_FLOOR = 0.05
     filtered_top: list[tuple[float, Any]] = []
     dropped_low = 0
     for score, reel in top:
         rid = str(reel.id)
         review = review_map.get(rid)
         if review is None:
-            # Reviewer call failed for this one — keep it (don't penalize
-            # for our infra hiccup) but don't override its reason.
             filtered_top.append((score, reel))
             continue
-        if review["score"] < SCORE_FLOOR:
+        cscore = float(review.get("score") or 0.0)
+        if cscore < SCORE_FLOOR:
             dropped_low += 1
             continue
         filtered_top.append((score, reel))
 
     logger.info(
-        "Claude reviewer pass: %d top candidates → %d kept (%d below floor=%d, %d errored)",
+        "Claude reviewer pass: %d top candidates → %d kept, %d dropped (Claude score < %.2f), %d enriched-with-reason",
         len(top),
         len(filtered_top),
         dropped_low,
         SCORE_FLOOR,
-        len(top) - len(review_map),
+        sum(1 for r in review_map.values() if r.get("reason")),
     )
 
     return filtered_top + rest, review_map
