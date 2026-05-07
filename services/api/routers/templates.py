@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from pydantic import BaseModel
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from db.session import get_db
 from middleware.auth import get_current_user
@@ -110,10 +110,14 @@ class TemplateUpdateRequest(BaseModel):
 
 @router.get("")
 async def list_templates(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    # Union: the user's own templates + every master template. Masters
+    # come back first (newest masters before older masters before
+    # user-created), so a fresh user with zero personal templates still
+    # sees the seeded defaults at the top of their list.
     result = await db.execute(
         select(UserTemplate)
-        .where(UserTemplate.user_id == current_user.id)
-        .order_by(UserTemplate.created_at.desc())
+        .where(or_(UserTemplate.user_id == current_user.id, UserTemplate.is_master.is_(True)))
+        .order_by(UserTemplate.is_master.desc(), UserTemplate.created_at.desc())
         .limit(_MAX_TEMPLATES_LIST)
     )
     rows = result.scalars().all()
@@ -124,7 +128,13 @@ async def list_templates(current_user: User = Depends(get_current_user), db: Asy
 
 @router.get("/{template_id}")
 async def get_template(template_id: UUID, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(UserTemplate).where(UserTemplate.id == template_id, UserTemplate.user_id == current_user.id))
+    # Permit master templates plus the user's own.
+    result = await db.execute(
+        select(UserTemplate).where(
+            UserTemplate.id == template_id,
+            or_(UserTemplate.user_id == current_user.id, UserTemplate.is_master.is_(True)),
+        )
+    )
     t = result.scalar_one_or_none()
     if not t: raise HTTPException(status_code=404, detail="Template not found")
     return _tpl_dict(t)
@@ -186,7 +196,10 @@ async def set_default(
 async def update_template(template_id: UUID, body: TemplateUpdateRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(UserTemplate).where(UserTemplate.id == template_id, UserTemplate.user_id == current_user.id))
     t = result.scalar_one_or_none()
-    if not t: raise HTTPException(status_code=404, detail="Template not found")
+    if not t:
+        # 404 covers both "wrong user" and "is a master template" — masters
+        # are immutable; users fork them via duplicate-as-mine to edit.
+        raise HTTPException(status_code=404, detail="Template not found")
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(t, field, value)
     await db.flush()
@@ -279,10 +292,16 @@ async def upload_logo(
 
 def _tpl_dict(t: UserTemplate) -> dict:
     return {
-        "id": str(t.id), "user_id": str(t.user_id), "template_name": t.template_name,
+        "id": str(t.id),
+        # user_id is NULL for master templates — surface that as null on
+        # the wire so the editor can detect "ownerless" and refuse to PUT.
+        "user_id": str(t.user_id) if t.user_id is not None else None,
+        "template_name": t.template_name,
         "logo_minio_key": t.logo_minio_key, "logo_position": t.logo_position,
         "headline_defaults": t.headline_defaults, "subtitle_defaults": t.subtitle_defaults,
         "text_layers": t.text_layers or [],
         "background_color": t.background_color, "is_default": t.is_default,
+        "is_master": bool(getattr(t, "is_master", False)),
+        "lock_layout": bool(getattr(t, "lock_layout", False)),
         "created_at": str(t.created_at), "updated_at": str(t.updated_at),
     }

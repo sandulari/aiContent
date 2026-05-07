@@ -117,6 +117,10 @@ export function Canvas({
     const layer = getLayer(id);
     const textLayer = getTextLayer(id);
     if (!layer && !textLayer) return;
+    // Locked text layers can be selected (so the user sees properties +
+    // the unlock toggle) but cannot be moved or resized. Bail before
+    // arming the drag state machine.
+    if (textLayer && textLayer.locked) return;
     setDrag({
       id,
       handle,
@@ -692,7 +696,10 @@ export function Canvas({
                   onDoubleClick={(e) => {
                     e.stopPropagation();
                     onSelectLayer(layerId);
-                    setEditingText(layerId);
+                    // Locked layers can be selected but not entered for
+                    // inline edit. PropertiesPanel surfaces the unlock
+                    // toggle so the user has a path forward.
+                    if (!t.locked) setEditingText(layerId);
                   }}
                   className="absolute z-30"
                   style={{
@@ -700,15 +707,17 @@ export function Canvas({
                     top: `${t.y}%`,
                     transform: anchorTransform,
                     width: boxW,
-                    cursor: isEditing
-                      ? "text"
-                      : drag?.id === layerId
-                        ? "grabbing"
-                        : "grab",
+                    cursor: t.locked
+                      ? "not-allowed"
+                      : isEditing
+                        ? "text"
+                        : drag?.id === layerId
+                          ? "grabbing"
+                          : "grab",
                   }}
                 >
                   <div
-                    contentEditable={isEditing}
+                    contentEditable={isEditing && !t.locked}
                     suppressContentEditableWarning
                     onBlur={(e) => commitTextEdit(layerId, e.currentTarget)}
                     onKeyDown={(e) => handleTextKeyDown(e, layerId)}

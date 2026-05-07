@@ -565,11 +565,51 @@ export function PropertiesPanel({ selectedLayer, onUpdateProps }: PropertiesPane
     selectedLayer.type === "account_name" ||
     selectedLayer.type === "custom";
 
+  // Per-layer lock — only meaningful on dynamic text layers (video and
+  // logo don't carry `locked`). When true, the controls render greyed +
+  // unclickable and canvas drag is also blocked (Canvas.startDrag).
+  const isLocked = !!(isTextType && p && p.locked);
+  const toggleLock = () => update({ locked: !p?.locked });
+
   return (
-    <div className="p-3 space-y-1">
-      {selectedLayer.type === "video" && <VideoControls p={p} update={update} />}
-      {isTextType && <TextControls p={p} update={update} />}
-      {selectedLayer.type === "logo" && <LogoControls p={p} update={update} />}
+    <div className="p-3 space-y-2">
+      {isTextType && (
+        <button
+          onClick={toggleLock}
+          className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded border text-[11px] transition-colors ${
+            isLocked
+              ? "border-[#d29922] bg-[#d29922]/10 text-[#d29922] hover:bg-[#d29922]/15"
+              : "border-[#30363d] bg-[#0d1117] text-[#8b949e] hover:border-[#58a6ff] hover:text-[#58a6ff]"
+          }`}
+          title={isLocked ? "Layer is locked. Click to unlock for editing." : "Layer is editable. Click to lock."}
+        >
+          <span className="flex items-center gap-1.5">
+            {isLocked ? (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+              </svg>
+            )}
+            {isLocked ? "Locked" : "Unlocked"}
+          </span>
+          <span className="text-[10px] opacity-70">
+            {isLocked ? "Click to edit" : "Click to lock"}
+          </span>
+        </button>
+      )}
+      <div
+        className={isLocked ? "opacity-50 pointer-events-none select-none" : ""}
+        aria-disabled={isLocked || undefined}
+      >
+        <div className="space-y-1">
+          {selectedLayer.type === "video" && <VideoControls p={p} update={update} />}
+          {isTextType && <TextControls p={p} update={update} />}
+          {selectedLayer.type === "logo" && <LogoControls p={p} update={update} />}
+        </div>
+      </div>
     </div>
   );
 }

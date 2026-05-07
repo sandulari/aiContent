@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from db.session import engine
 from db.migrations import run_migrations
+from db.seed_master_templates import seed_master_templates
 from models.base import Base
 import models  # noqa: F401 — triggers registration of every SQLAlchemy model
 from routers import auth, my_pages, recommendations, reels, templates, exports, ai, files, niches, jobs, ig_oauth, scheduled_reels
@@ -14,6 +15,7 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await run_migrations(engine)
+    await seed_master_templates(engine)
     yield
     await engine.dispose()
 

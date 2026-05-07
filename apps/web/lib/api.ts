@@ -130,10 +130,20 @@ export interface ReelFile {
 }
 
 export interface Template {
-  id: string; user_id: string; template_name: string; logo_minio_key: string | null;
+  id: string;
+  // null for master templates (ownerless, shipped with the app)
+  user_id: string | null;
+  template_name: string; logo_minio_key: string | null;
   logo_position: Record<string, any>; headline_defaults: Record<string, any>;
   subtitle_defaults: Record<string, any>; background_color: string;
-  is_default: boolean; created_at: string; updated_at: string;
+  is_default: boolean;
+  // True on master/system templates. Editor uses it to disable destructive
+  // ops (delete, rename) and hide them from per-user CRUD.
+  is_master?: boolean;
+  // When true, every layer cloned from this template starts in a locked
+  // state. The editor renders a per-layer unlock toggle.
+  lock_layout?: boolean;
+  created_at: string; updated_at: string;
 }
 
 export interface TextLayer {
@@ -160,6 +170,11 @@ export interface TextLayer {
   strokeWidth: number;
   opacity: number;
   anchor: "center" | "top-left";
+  // Per-layer lock. When true, the editor renders the layer's
+  // properties read-only and blocks canvas drag. User toggles this via
+  // a 🔒 button in the properties panel; master templates default
+  // every layer to locked=true on first open.
+  locked?: boolean;
   highlights?: Array<{
     match: string;              // the phrase to highlight (case-insensitive, all occurrences)
     bgColor: string;            // hex

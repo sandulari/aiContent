@@ -301,6 +301,33 @@ MIGRATION_STATEMENTS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_viral_reels_downloadable
     ON viral_reels (id) WHERE is_downloadable = TRUE
     """,
+    # -----------------------------------------------------------------
+    # Master templates — ownerless defaults shipped with the app.
+    # is_master=TRUE rows are visible to every user via the templates
+    # API; lock_layout=TRUE means the editor renders layers read-only by
+    # default with a per-layer unlock toggle. user_id becomes nullable
+    # so a master can exist without an owning user; existing per-user
+    # templates keep user_id set and are unaffected.
+    # -----------------------------------------------------------------
+    """
+    ALTER TABLE user_templates
+    ALTER COLUMN user_id DROP NOT NULL
+    """,
+    """
+    ALTER TABLE user_templates
+    ADD COLUMN IF NOT EXISTS is_master BOOLEAN NOT NULL DEFAULT FALSE
+    """,
+    """
+    ALTER TABLE user_templates
+    ADD COLUMN IF NOT EXISTS lock_layout BOOLEAN NOT NULL DEFAULT FALSE
+    """,
+    # Master templates are looked up on every editor open. Tiny partial
+    # index keeps that lookup fast without bloating writes for per-user
+    # rows (the common case).
+    """
+    CREATE INDEX IF NOT EXISTS idx_user_templates_master
+    ON user_templates (id) WHERE is_master = TRUE
+    """,
 ]
 
 

@@ -653,9 +653,14 @@ export default function EditorPage() {
                 value={selectedLayer.props.text || ""}
                 onChange={(e) => handleUpdateProps(selectedLayer.id, { text: e.target.value })}
                 rows={2}
-                className="w-full bg-[#0d1117] border border-[#30363d] rounded px-2 py-1.5 text-sm text-[#c9d1d9] focus:border-[#58a6ff] focus:outline-none resize-none"
+                disabled={!!selectedLayer.props.locked}
+                className="w-full bg-[#0d1117] border border-[#30363d] rounded px-2 py-1.5 text-sm text-[#c9d1d9] focus:border-[#58a6ff] focus:outline-none resize-none disabled:opacity-50 disabled:cursor-not-allowed"
               />
-              <p className="text-[10px] text-[#484f58] mt-1">Tip: double-click the text on canvas to edit inline.</p>
+              <p className="text-[10px] text-[#484f58] mt-1">
+                {selectedLayer.props.locked
+                  ? "Layer is locked — unlock it in the panel below to edit."
+                  : "Tip: double-click the text on canvas to edit inline."}
+              </p>
             </div>
           )}
           {/* Per-export logo upload — only when Logo layer is selected */}

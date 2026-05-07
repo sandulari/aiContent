@@ -117,11 +117,21 @@ async def _apply_template_to_export(export: UserExport, template: UserTemplate) 
     # subtitle_text so the user's copy ends up where they expect.
     src_layers = template.text_layers or []
     if src_layers:
+        # Master templates ship with lock_layout=TRUE — every cloned layer
+        # gets `locked=True` so the editor renders read-only by default
+        # with a per-layer unlock toggle. User-created templates default
+        # to lock_layout=False so existing flows are unaffected.
+        default_locked = bool(getattr(template, "lock_layout", False))
         cloned: list[dict] = []
         for layer in src_layers:
             l = copy.deepcopy(layer)
             # Fresh id per export so edits don't collide with the template.
             l["id"] = str(_uuid.uuid4())
+            # Initialise lock unless the template author explicitly chose
+            # one for the layer (rare — gives advanced users a way to
+            # mark specific layers always-editable on a locked template).
+            if "locked" not in l:
+                l["locked"] = default_locked
             role = l.get("role")
             if role == "headline" and export.headline_text:
                 l["text"] = export.headline_text

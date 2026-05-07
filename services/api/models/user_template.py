@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 class UserTemplate(UUIDMixin, Base):
     __tablename__ = "user_templates"
-    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     user_page_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("user_pages.id", ondelete="SET NULL"), nullable=True)
     template_name: Mapped[str] = mapped_column(String(200), nullable=False)
     logo_minio_key: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -25,6 +25,13 @@ class UserTemplate(UUIDMixin, Base):
     text_layers: Mapped[list] = mapped_column(JSONB, default=list)
     background_color: Mapped[str] = mapped_column(String(20), default="#000000")
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Ownerless template shipped with the app. Visible to every user via
+    # GET /api/templates which unions WHERE user_id = :me OR is_master.
+    is_master: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # When TRUE the editor renders text layers read-only with a per-layer
+    # unlock toggle. Master templates default-locked; user-created ones
+    # default-unlocked.
+    lock_layout: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, server_default=func.now(), onupdate=datetime.utcnow)
 
