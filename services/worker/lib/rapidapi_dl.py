@@ -1,9 +1,10 @@
 """RapidAPI video downloader — primary download path.
 
-Wraps the RapidAPI marketplace `social-media-video-downloader`
-endpoint (DataFanatic) which handles the IP-block dance our datacenter
+Wraps the RapidAPI marketplace `social-download-all-in-one`
+endpoint (nguyenmanhict) which handles the IP-block dance our datacenter
 yt-dlp can't beat (YouTube/TikTok increasingly serve "sign in to confirm
-you're not a bot" or 403 to cloud IPs).
+you're not a bot" or 403 to cloud IPs). Supports IG reels/posts, TikTok,
+YouTube, Facebook, Twitter/X via a single autolink endpoint.
 
 Returns None on any failure so callers gracefully fall through to
 yt-dlp + Playwright. Auth uses the existing RAPIDAPI_KEY by default
@@ -12,7 +13,8 @@ the option to override via RAPIDAPI_VIDEO_DL_KEY.
 
 Env:
   RAPIDAPI_VIDEO_DL_KEY   — optional override (defaults to RAPIDAPI_KEY)
-  RAPIDAPI_VIDEO_DL_HOST  — optional, defaults to DataFanatic's host
+  RAPIDAPI_VIDEO_DL_HOST  — optional, defaults to social-download-all-in-one
+  RAPIDAPI_VIDEO_DL_PATH  — optional, defaults to "/v1/social/autolink"
 """
 from __future__ import annotations
 
@@ -34,11 +36,12 @@ logger = logging.getLogger(__name__)
 _KEY = os.getenv("RAPIDAPI_VIDEO_DL_KEY") or os.getenv("RAPIDAPI_KEY", "")
 _HOST = os.getenv(
     "RAPIDAPI_VIDEO_DL_HOST",
-    "social-media-video-downloader.p.rapidapi.com",
+    "social-download-all-in-one.p.rapidapi.com",
 )
-# DataFanatic's endpoint path. If a future provider lands on RapidAPI
-# with a different shape, override here without code changes.
-_PATH = os.getenv("RAPIDAPI_VIDEO_DL_PATH", "/smvd/get/all")
+# nguyenmanhict's autolink endpoint — JSON body, returns medias[] +
+# result.video_url. If a future provider lands on RapidAPI with a
+# different shape, override host + path via env without code changes.
+_PATH = os.getenv("RAPIDAPI_VIDEO_DL_PATH", "/v1/social/autolink")
 
 # Per-attempt timeouts. The resolution call is fast (≤10s) but the
 # actual MP4 stream can be a 30 MB+ download — give it real headroom.
@@ -55,22 +58,23 @@ def _extract_media_url(data) -> Optional[str]:
     """Defensively pull a downloadable URL from various RapidAPI shapes.
 
     Different providers and even different responses from the same
-    endpoint vary — `links: [{url}]`, top-level `url`, nested
-    `video.url`, etc. We walk all the common patterns rather than
-    pinning to one.
+    endpoint vary — `medias: [{url}]`, top-level `download_url`, nested
+    `result.video_url`, etc. We walk all the common patterns rather
+    than pinning to one.
+
+    Order matters: we check arrays FIRST because providers like
+    social-download-all-in-one echo the input URL as top-level "url",
+    so a naive top-level scan would return the input back to us.
+    Unambiguous keys (`download_url`, `video_url`) are still safe at
+    the top level because they're never used for input echo.
     """
     if not isinstance(data, dict):
         return None
 
-    # Top-level direct URL fields.
-    for key in ("url", "download_url", "video_url", "downloadUrl", "media_url"):
-        v = data.get(key)
-        if isinstance(v, str) and v.startswith("http"):
-            return v
-
-    # `links` / `downloadLinks` / `media` arrays. Prefer mp4-flagged
-    # entries with explicit quality, but fall back to any link.
-    for arr_key in ("links", "downloadLinks", "media", "videos"):
+    # `medias` / `links` / `downloadLinks` / `media` arrays. Prefer
+    # mp4-flagged entries with explicit quality, but fall back to any
+    # link. `medias` is what social-download-all-in-one returns.
+    for arr_key in ("medias", "links", "downloadLinks", "media", "videos"):
         arr = data.get(arr_key)
         if isinstance(arr, list) and arr:
             best: Optional[str] = None
@@ -79,6 +83,9 @@ def _extract_media_url(data) -> Optional[str]:
                     continue
                 url = link.get("url") or link.get("link") or link.get("downloadUrl")
                 if not isinstance(url, str) or not url.startswith("http"):
+                    continue
+                # Skip audio-only entries when the array also has video.
+                if str(link.get("type", "")).lower() == "audio":
                     continue
                 # Prefer non-watermarked, mp4, hd hints if available.
                 hints = " ".join(
@@ -91,6 +98,13 @@ def _extract_media_url(data) -> Optional[str]:
                     best = url
             if best:
                 return best
+
+    # Unambiguous top-level direct URL fields. Intentionally NOT
+    # checking plain `url` — providers commonly echo input there.
+    for key in ("download_url", "video_url", "downloadUrl", "media_url"):
+        v = data.get(key)
+        if isinstance(v, str) and v.startswith("http"):
+            return v
 
     # Nested wrappers — many APIs wrap payload in `data` or `video`.
     for nested_key in ("video", "data", "result"):
@@ -109,18 +123,20 @@ def download_via_rapidapi(source_url: str, video_id: str) -> Optional[DownloadRe
         logger.debug("RapidAPI not configured (no key); skipping primary path")
         return None
 
+    # nguyenmanhict's autolink expects POST with a JSON body.
     headers = {
         "x-rapidapi-key": _KEY,
         "x-rapidapi-host": _HOST,
+        "content-type": "application/json",
         "accept": "application/json",
     }
 
     # Step 1: ask RapidAPI to resolve the source URL → MP4 download URL
     try:
         with httpx.Client(timeout=_RESOLVE_TIMEOUT, headers=headers) as client:
-            resp = client.get(
+            resp = client.post(
                 f"https://{_HOST}{_PATH}",
-                params={"url": source_url},
+                json={"url": source_url},
             )
     except httpx.RequestError as exc:
         logger.warning("RapidAPI resolve request failed: %s", exc)
