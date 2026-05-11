@@ -48,6 +48,7 @@ def _mk(
     score: float = 0.0,
 ) -> DiscoveryItem:
     return DiscoveryItem(
+        id=None,
         source_handle=handle,
         permalink=permalink,
         media_url=None,

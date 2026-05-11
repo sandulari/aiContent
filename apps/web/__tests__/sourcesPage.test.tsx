@@ -26,6 +26,8 @@ vi.mock("@/lib/api", async () => {
       discovery: {
         items: vi.fn(),
         refresh: vi.fn(),
+        download: vi.fn(),
+        downloadStatus: vi.fn(),
       },
     },
   };
@@ -33,10 +35,16 @@ vi.mock("@/lib/api", async () => {
 
 import { api, ApiError } from "@/lib/api";
 
-const dApi = api.discovery as { items: Mock; refresh: Mock };
+const dApi = api.discovery as {
+  items: Mock;
+  refresh: Mock;
+  download: Mock;
+  downloadStatus: Mock;
+};
 const fApi = api.discoveryFilter as { get: Mock; save: Mock; preview: Mock };
 
 const mkItem = (suffix: string, overrides: Partial<DiscoveryItem> = {}): DiscoveryItem => ({
+  id: `id-${suffix}`,
   source_handle: "natgeo",
   permalink: `https://www.instagram.com/reel/${suffix}/`,
   media_url: null,
@@ -79,6 +87,8 @@ const itemsResponse = (items: DiscoveryItem[], hasCache = true): DiscoveryItemsR
 beforeEach(() => {
   dApi.items.mockReset();
   dApi.refresh.mockReset();
+  dApi.download.mockReset();
+  dApi.downloadStatus.mockReset();
   fApi.get.mockReset();
   fApi.save.mockReset();
   fApi.preview.mockReset();
@@ -235,6 +245,39 @@ describe("/sources page", () => {
       expect(
         screen.getByTestId("sources-refresh-note"),
       ).toHaveTextContent(/add one first/i),
+    );
+  });
+
+  // Task 1.5 — download click + status reflects in the button
+  it("download click calls api.discovery.download and reflects the queued status", async () => {
+    const item = mkItem("Cdl");
+    dApi.items.mockResolvedValue(itemsResponse([item]));
+    dApi.download.mockResolvedValue({
+      id: "dl-1",
+      reference_reel_id: "id-Cdl",
+      status: "queued",
+      minio_key: null,
+      file_size_bytes: null,
+      error_message: null,
+      created_at: "2026-05-12T00:00:00Z",
+      updated_at: "2026-05-12T00:00:00Z",
+    });
+    const user = userEvent.setup();
+
+    render(<SourcesPage />);
+    await waitFor(() => screen.getByTestId("sources-grid"));
+
+    const btn = screen.getByTestId(`source-download-${item.permalink}`);
+    expect(btn).toHaveTextContent("Download");
+    expect(btn).not.toBeDisabled();
+
+    await user.click(btn);
+    expect(dApi.download).toHaveBeenCalledWith("id-Cdl");
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId(`source-download-${item.permalink}`),
+      ).toHaveTextContent("Downloading"),
     );
   });
 });

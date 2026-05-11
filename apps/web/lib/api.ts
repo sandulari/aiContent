@@ -317,6 +317,7 @@ export interface DiscoveryFilterPreview {
 }
 
 export interface DiscoveryItem {
+  id: string | null;            // reference_reel UUID — null for un-cached items
   source_handle: string;
   permalink: string;
   media_url: string | null;
@@ -328,6 +329,19 @@ export interface DiscoveryItem {
   posted_at: string | null;     // ISO 8601
   duration_seconds: number | null;
   score: number;
+}
+
+export type DownloadStatus = "queued" | "downloading" | "done" | "failed";
+
+export interface Download {
+  id: string;
+  reference_reel_id: string;
+  status: DownloadStatus;
+  minio_key: string | null;
+  file_size_bytes: number | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface DiscoveryItemsResponse {
@@ -656,6 +670,12 @@ export const api = {
     },
     refresh() {
       return req<DiscoveryRefreshResponse>("/api/discovery/refresh", { method: "POST" });
+    },
+    download(reelId: string) {
+      return req<Download>(`/api/discovery/items/${reelId}/download`, { method: "POST" });
+    },
+    downloadStatus(downloadId: string) {
+      return req<Download>(`/api/discovery/downloads/${downloadId}`);
     },
   },
 };

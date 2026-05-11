@@ -14,6 +14,7 @@ import { SourcesCard } from "@/components/sources/sourcesCard";
 import type { DiscoveryItem } from "@/lib/api";
 
 const baseItem: DiscoveryItem = {
+  id: "00000000-0000-0000-0000-000000000001",
   source_handle: "natgeo",
   permalink: "https://www.instagram.com/reel/Caa/",
   media_url: null,
@@ -185,4 +186,33 @@ describe("SourcesCard", () => {
     );
     expect(onDownload).toHaveBeenCalledWith(baseItem);
   });
+
+  // Task 1.5 — download status reflects on the button label + disabled state
+  it.each([
+    ["queued", "Downloading", true],
+    ["downloading", "Downloading", true],
+    ["done", "Downloaded", true],
+    ["failed", "Retry", false],
+  ] as const)(
+    "downloadStatus=%s -> label '%s' / disabled=%s",
+    (statusValue, expectedLabel, expectedDisabled) => {
+      render(
+        <SourcesCard
+          item={baseItem}
+          selected={false}
+          onToggleSelect={() => {}}
+          onOpenOnIG={() => {}}
+          onDownload={() => {}}
+          downloadStatus={statusValue}
+        />,
+      );
+      const btn = screen.getByTestId(`source-download-${baseItem.permalink}`);
+      expect(btn).toHaveTextContent(expectedLabel);
+      if (expectedDisabled) {
+        expect(btn).toBeDisabled();
+      } else {
+        expect(btn).not.toBeDisabled();
+      }
+    },
+  );
 });

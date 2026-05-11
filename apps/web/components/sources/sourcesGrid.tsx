@@ -1,6 +1,6 @@
 "use client";
 
-import type { DiscoveryItem } from "@/lib/api";
+import type { DiscoveryItem, DownloadStatus } from "@/lib/api";
 
 import { SourcesCard } from "./sourcesCard";
 
@@ -11,6 +11,8 @@ interface SourcesGridProps {
   onOpenOnIG: (item: DiscoveryItem) => void;
   onDownload?: (item: DiscoveryItem) => void;
   onFindSimilar?: (item: DiscoveryItem) => void;
+  /** Map of reference_reel_id -> current DownloadStatus. */
+  downloadStatuses?: Map<string, DownloadStatus>;
 }
 
 /**
@@ -25,6 +27,7 @@ export function SourcesGrid({
   onOpenOnIG,
   onDownload,
   onFindSimilar,
+  downloadStatuses,
 }: SourcesGridProps) {
   return (
     <div
@@ -40,6 +43,7 @@ export function SourcesGrid({
           onOpenOnIG={onOpenOnIG}
           onDownload={onDownload}
           onFindSimilar={onFindSimilar}
+          downloadStatus={item.id ? downloadStatuses?.get(item.id) ?? null : null}
         />
       ))}
     </div>

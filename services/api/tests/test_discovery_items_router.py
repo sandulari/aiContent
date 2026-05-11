@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 import services.rate_limiter as rate_limiter_mod
 from models.discovery_filter import DiscoveryFilter
+from models.download import Download
 from models.reference_page import ReferencePage
 from models.reference_reel import ReferenceReel
 from routers import discovery_items as items_mod
@@ -346,3 +347,134 @@ async def test_filter_preview_empty_cache_keeps_has_cache_false(authed_client):
     body = r.json()
     assert body["has_cache"] is False
     assert body["count"] == 0
+
+
+# ===========================================================================
+# POST /api/discovery/items/{id}/download — idempotency + ownership
+# GET  /api/discovery/downloads/{id} — status polling
+# ===========================================================================
+
+
+@pytest_asyncio.fixture
+async def _stub_download_background(monkeypatch):
+    """Replace the BackgroundTask target so POST /download doesn't try to
+    hit RapidAPI in tests. Endpoint behavior is what matters here;
+    perform_download itself is exercised in test_discovery_download.py."""
+    async def _noop(*args, **kwargs):
+        return None
+    monkeypatch.setattr(items_mod, "_perform_download_background", _noop)
+
+
+async def _seed_owned_reel(db_session, user, handle="natgeo"):
+    page = ReferencePage(user_id=user.id, ig_handle=handle)
+    db_session.add(page)
+    await db_session.flush()
+    reel = _mk_reel(page.id, mid="m1", code="Caa")
+    db_session.add(reel)
+    await db_session.flush()
+    return reel
+
+
+async def test_download_post_creates_row_202(
+    authed_client, db_session, authed_user, _stub_download_background
+):
+    reel = await _seed_owned_reel(db_session, authed_user)
+
+    r = await authed_client.post(f"/api/discovery/items/{reel.id}/download")
+    assert r.status_code == 202, r.text
+    body = r.json()
+    assert body["status"] == "queued"
+    assert body["reference_reel_id"] == str(reel.id)
+    assert body["minio_key"] is None
+
+
+async def test_download_post_is_idempotent_returns_existing(
+    authed_client, db_session, authed_user, _stub_download_background
+):
+    reel = await _seed_owned_reel(db_session, authed_user)
+
+    r1 = await authed_client.post(f"/api/discovery/items/{reel.id}/download")
+    assert r1.status_code == 202
+    first_id = r1.json()["id"]
+
+    r2 = await authed_client.post(f"/api/discovery/items/{reel.id}/download")
+    # Second call: same row, 200 (not 202) to signal "already exists".
+    assert r2.status_code == 200
+    assert r2.json()["id"] == first_id
+
+    # Only one row in DB.
+    from sqlalchemy import select as sa_select, func
+    count = (
+        await db_session.execute(
+            sa_select(func.count()).select_from(Download).where(
+                Download.user_id == authed_user.id,
+                Download.reference_reel_id == reel.id,
+            )
+        )
+    ).scalar()
+    assert count == 1
+
+
+async def test_download_post_404_when_reel_does_not_exist(
+    authed_client, _stub_download_background
+):
+    from uuid import uuid4
+    r = await authed_client.post(f"/api/discovery/items/{uuid4()}/download")
+    assert r.status_code == 404
+
+
+async def test_download_post_404_when_reel_belongs_to_another_user(
+    authed_client, db_session, authed_user, other_authed_user, _stub_download_background
+):
+    # Reel owned by other_authed_user.
+    page = ReferencePage(user_id=other_authed_user.id, ig_handle="nasa")
+    db_session.add(page)
+    await db_session.flush()
+    reel = _mk_reel(page.id, mid="m1", code="Caa")
+    db_session.add(reel)
+    await db_session.flush()
+
+    r = await authed_client.post(f"/api/discovery/items/{reel.id}/download")
+    assert r.status_code == 404
+
+
+async def test_get_download_status(
+    authed_client, db_session, authed_user, _stub_download_background
+):
+    reel = await _seed_owned_reel(db_session, authed_user)
+    create = await authed_client.post(f"/api/discovery/items/{reel.id}/download")
+    download_id = create.json()["id"]
+
+    r = await authed_client.get(f"/api/discovery/downloads/{download_id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["id"] == download_id
+    assert body["status"] == "queued"
+
+
+async def test_get_download_404_when_not_owner(
+    authed_client, db_session, authed_user, other_authed_user
+):
+    page = ReferencePage(user_id=other_authed_user.id, ig_handle="nasa")
+    db_session.add(page)
+    await db_session.flush()
+    reel = _mk_reel(page.id, mid="m1", code="Caa")
+    db_session.add(reel)
+    await db_session.flush()
+    other_dl = Download(
+        user_id=other_authed_user.id,
+        reference_reel_id=reel.id,
+        status="done",
+        minio_key="discovery/x.mp4",
+    )
+    db_session.add(other_dl)
+    await db_session.flush()
+
+    r = await authed_client.get(f"/api/discovery/downloads/{other_dl.id}")
+    assert r.status_code == 404
+
+
+async def test_get_download_unauthenticated_401(client):
+    from uuid import uuid4
+    r = await client.get(f"/api/discovery/downloads/{uuid4()}")
+    assert r.status_code == 401

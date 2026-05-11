@@ -6,9 +6,20 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { SourcesFilterBar } from "@/components/sources/sourcesFilterBar";
 import { SourcesGrid } from "@/components/sources/sourcesGrid";
-import { ApiError, api, type DiscoveryItem } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  type DiscoveryItem,
+  type Download,
+  type DownloadStatus,
+} from "@/lib/api";
 
 const REFRESH_REFETCH_MS = 6000;
+const DOWNLOAD_POLL_MS = 3000;
+
+function isTerminalStatus(s: DownloadStatus): boolean {
+  return s === "done" || s === "failed";
+}
 
 /**
  * Per-reference-page discovery feed. Reads from the ``reference_reels``
@@ -29,6 +40,9 @@ export default function SourcesPage() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNote, setRefreshNote] = useState<string | null>(null);
+  // Map reference_reel_id -> latest Download row. Drives the card's
+  // Download button label/disable state and the polling loop below.
+  const [downloads, setDownloads] = useState<Map<string, Download>>(new Map());
 
   const loadItems = useCallback(async () => {
     setError(null);
@@ -73,6 +87,51 @@ export default function SourcesPage() {
     // a button click (the card has its own selection click area).
     window.open(item.permalink, "_blank", "noopener,noreferrer");
   }, []);
+
+  const handleDownload = useCallback(async (item: DiscoveryItem) => {
+    if (!item.id) return; // Cache miss — nothing to download against
+    try {
+      const dl = await api.discovery.download(item.id);
+      setDownloads((prev) => {
+        const next = new Map(prev);
+        next.set(dl.reference_reel_id, dl);
+        return next;
+      });
+    } catch (e: any) {
+      setError(e?.message ?? "Download failed to start");
+    }
+  }, []);
+
+  // Poll non-terminal downloads every few seconds. Stops automatically
+  // when every tracked download reaches done|failed.
+  useEffect(() => {
+    const inFlight = Array.from(downloads.values()).filter(
+      (d) => !isTerminalStatus(d.status),
+    );
+    if (inFlight.length === 0) return;
+
+    let cancelled = false;
+    const t = setInterval(async () => {
+      const results = await Promise.allSettled(
+        inFlight.map((d) => api.discovery.downloadStatus(d.id)),
+      );
+      if (cancelled) return;
+      setDownloads((prev) => {
+        const next = new Map(prev);
+        for (const r of results) {
+          if (r.status === "fulfilled") {
+            next.set(r.value.reference_reel_id, r.value);
+          }
+        }
+        return next;
+      });
+    }, DOWNLOAD_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [downloads]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -181,9 +240,13 @@ export default function SourcesPage() {
             selectedPermalinks={selected}
             onToggleSelect={handleToggleSelect}
             onOpenOnIG={handleOpenOnIG}
-            // Download + Find Similar wiring lands in Tasks 1.5 and 1.6.
-            // Leaving the props off renders the buttons disabled with a
-            // tooltip rather than firing a half-built backend.
+            onDownload={handleDownload}
+            downloadStatuses={
+              new Map(
+                Array.from(downloads.entries()).map(([k, v]) => [k, v.status]),
+              )
+            }
+            // Find Similar wiring lands in Task 1.6.
           />
         </>
       )}

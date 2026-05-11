@@ -21,6 +21,7 @@ from models.scheduled_reel import ScheduledReel
 from models.reference_page import ReferencePage
 from models.discovery_filter import DiscoveryFilter
 from models.reference_reel import ReferenceReel
+from models.download import Download
 
 __all__ = [
     "Base", "UUIDMixin",
@@ -35,4 +36,5 @@ __all__ = [
     "ReferencePage",
     "DiscoveryFilter",
     "ReferenceReel",
+    "Download",
 ]

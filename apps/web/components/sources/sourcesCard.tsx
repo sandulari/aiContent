@@ -3,7 +3,7 @@
 import clsx from "clsx";
 
 import { Button } from "@/components/ui/button";
-import type { DiscoveryItem } from "@/lib/api";
+import type { DiscoveryItem, DownloadStatus } from "@/lib/api";
 
 interface SourcesCardProps {
   item: DiscoveryItem;
@@ -12,6 +12,25 @@ interface SourcesCardProps {
   onOpenOnIG: (item: DiscoveryItem) => void;
   onDownload?: (item: DiscoveryItem) => void;
   onFindSimilar?: (item: DiscoveryItem) => void;
+  /** Current download status for this item, if any. Drives the Download
+   * button's label + enabled state — Task 1.5. */
+  downloadStatus?: DownloadStatus | null;
+}
+
+function downloadButtonLabel(status: DownloadStatus | null | undefined): string {
+  if (status === "queued" || status === "downloading") return "Downloading…";
+  if (status === "done") return "Downloaded";
+  if (status === "failed") return "Retry";
+  return "Download";
+}
+
+function downloadButtonDisabled(
+  status: DownloadStatus | null | undefined,
+  hasHandler: boolean,
+): boolean {
+  if (!hasHandler) return true; // Task 1.5 not wired by caller
+  if (status === "queued" || status === "downloading" || status === "done") return true;
+  return false;
 }
 
 function formatCompact(n: number): string {
@@ -34,9 +53,11 @@ export function SourcesCard({
   onOpenOnIG,
   onDownload,
   onFindSimilar,
+  downloadStatus,
 }: SourcesCardProps) {
   const downloadEnabled = onDownload !== undefined;
   const findSimilarEnabled = onFindSimilar !== undefined;
+  const downloadDisabled = downloadButtonDisabled(downloadStatus, downloadEnabled);
 
   return (
     <article
@@ -137,12 +158,20 @@ export function SourcesCard({
           <Button
             size="sm"
             variant="ghost"
-            disabled={!downloadEnabled}
+            disabled={downloadDisabled}
             onClick={() => onDownload?.(item)}
             data-testid={`source-download-${item.permalink}`}
-            title={downloadEnabled ? "Download" : "Download lands in Task 1.5"}
+            title={
+              downloadEnabled
+                ? downloadStatus === "failed"
+                  ? item.id
+                    ? "Retry download"
+                    : "Download"
+                  : "Download"
+                : "Download lands in Task 1.5"
+            }
           >
-            Download
+            {downloadButtonLabel(downloadStatus)}
           </Button>
           <Button
             size="sm"

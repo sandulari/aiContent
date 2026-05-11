@@ -430,6 +430,31 @@ MIGRATION_STATEMENTS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_reference_reels_fetched
     ON reference_reels(fetched_at)
     """,
+    # downloads: per-user record of a reference_reel that was pulled into
+    # MinIO. UNIQUE(user_id, reference_reel_id) is the idempotency key
+    # for POST .../items/{id}/download — re-posting returns the existing
+    # row instead of triggering a second fetch. CHECK constraint mirrors
+    # the model's ALL_STATUSES tuple.
+    """
+    CREATE TABLE IF NOT EXISTS downloads (
+        id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id            UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        reference_reel_id  UUID NOT NULL REFERENCES reference_reels(id) ON DELETE CASCADE,
+        status             VARCHAR(20) NOT NULL DEFAULT 'queued'
+            CONSTRAINT ck_downloads_status
+            CHECK (status IN ('queued','downloading','done','failed')),
+        minio_key          TEXT,
+        file_size_bytes    BIGINT,
+        error_message      TEXT,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_downloads_user_reel UNIQUE (user_id, reference_reel_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_downloads_user_created
+    ON downloads(user_id, created_at DESC)
+    """,
 ]
 
 

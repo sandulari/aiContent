@@ -88,6 +88,10 @@ class RapidAPIError(Exception):
 
 @dataclass(frozen=True)
 class DiscoveryItem:
+    # Reference-reel UUID. Present when mapped from a persisted row (the
+    # GET /items code path); None when the item is a freshly-projected
+    # RapidAPI response that hasn't been upserted yet.
+    id: Optional[str]
     source_handle: str          # the reference page's IG handle (lowercase)
     permalink: str              # full IG URL — always a valid link
     media_url: Optional[str]    # signed IG CDN URL when known (else None)
@@ -102,6 +106,7 @@ class DiscoveryItem:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "id": self.id,
             "source_handle": self.source_handle,
             "permalink": self.permalink,
             "media_url": self.media_url,
@@ -250,8 +255,10 @@ def to_discovery_item(
     likes = int(_get("like_count", "likes", default=0) or 0)
     comments = int(_get("comment_count", "comments", default=0) or 0)
     posted_at = _coerce_posted_at(_get("posted_at", "taken_at", "taken_at_unix"))
+    raw_id = _get("id")
 
     return DiscoveryItem(
+        id=str(raw_id) if raw_id is not None else None,
         source_handle=source_handle,
         permalink=str(_get("permalink", "url", default="")),
         media_url=_get("media_url"),

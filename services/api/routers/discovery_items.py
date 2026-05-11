@@ -32,9 +32,11 @@ from models.discovery_filter import (
     DEFAULT_SORT_BY,
     DiscoveryFilter,
 )
+from models.download import Download
 from models.reference_page import ReferencePage
 from models.reference_reel import ReferenceReel
 from models.user import User
+from services.discovery_download import perform_download
 from services.rate_limiter import RateLimitExceeded, check_and_bump
 from services.reference_discovery import (
     DiscoveryItem,
@@ -293,3 +295,119 @@ async def refresh_pages_background(pages: Iterable[tuple[UUID, str]]) -> dict:
         result = await do_refresh(pages, db)
         await db.commit()
         return result
+
+
+# ---------------------------------------------------------------------------
+# POST /api/discovery/items/{reel_id}/download
+# GET  /api/discovery/downloads/{download_id}
+# ---------------------------------------------------------------------------
+
+
+def _download_to_dict(row: Download) -> dict:
+    return {
+        "id": str(row.id),
+        "reference_reel_id": str(row.reference_reel_id),
+        "status": row.status,
+        "minio_key": row.minio_key,
+        "file_size_bytes": row.file_size_bytes,
+        "error_message": row.error_message,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.post("/items/{reel_id}/download")
+async def request_item_download(
+    reel_id: UUID,
+    background: BackgroundTasks,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a discovery reel's media into our MinIO storage.
+
+    Idempotent at the (user, reel) level via the UNIQUE constraint on
+    ``downloads``. Re-posting the same item returns the existing row with
+    HTTP 200; the first POST returns 202 + a freshly-created row whose
+    BackgroundTask is in-flight. Ownership is enforced via the join to
+    ``reference_pages.user_id`` — User A can't trigger a download of User
+    B's reel even with the right UUID.
+
+    Spec literal path is ``POST /api/items/:id/download``; we namespace
+    under ``/api/discovery`` to avoid colliding with the legacy
+    ``/api/reels/{id}/download`` (which serves viral_reels, a different
+    table).
+    """
+    owned_reel = (
+        await db.execute(
+            select(ReferenceReel)
+            .join(ReferencePage, ReferenceReel.reference_page_id == ReferencePage.id)
+            .where(
+                ReferenceReel.id == reel_id,
+                ReferencePage.user_id == current_user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not owned_reel:
+        raise HTTPException(status_code=404, detail="Reel not found")
+
+    # Idempotent: return existing row if there's already a download for
+    # this (user, reel). Status carries the truth — ``done`` means the file
+    # is in MinIO, ``failed`` means caller can choose to retry by deleting
+    # and re-POSTing (Phase 2.2 will add proper Idempotency-Key replay).
+    existing = (
+        await db.execute(
+            select(Download).where(
+                Download.user_id == current_user.id,
+                Download.reference_reel_id == reel_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing:
+        response.status_code = status.HTTP_200_OK
+        return _download_to_dict(existing)
+
+    row = Download(
+        user_id=current_user.id,
+        reference_reel_id=reel_id,
+        status="queued",
+    )
+    db.add(row)
+    await db.flush()
+    await db.refresh(row)
+
+    background.add_task(_perform_download_background, row.id)
+    response.status_code = status.HTTP_202_ACCEPTED
+    return _download_to_dict(row)
+
+
+@router.get("/downloads/{download_id}")
+async def get_download(
+    download_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Poll status of a download. 404 if it's not the caller's."""
+    row = (
+        await db.execute(
+            select(Download).where(
+                Download.id == download_id,
+                Download.user_id == current_user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Download not found")
+    return _download_to_dict(row)
+
+
+async def _perform_download_background(download_id: UUID) -> None:
+    """Production wrapper for ``perform_download`` — opens its own session,
+    commits, never raises. Invoked by FastAPI BackgroundTasks."""
+    async with async_session() as db:
+        try:
+            await perform_download(download_id, db)
+            await db.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception("download %s wrapper failed", download_id)
+            await db.rollback()
