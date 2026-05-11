@@ -269,6 +269,21 @@ export interface ScheduleUpdatePayload {
   share_to_feed?: boolean;
 }
 
+export interface ReferencePage {
+  id: string;
+  ig_handle: string;
+  ig_user_id: string | null;
+  ig_display_name: string | null;
+  ig_profile_pic_url: string | null;
+  added_at: string;
+}
+
+export interface ReferencePagesList {
+  items: ReferencePage[];
+  count: number;
+  max: number;
+}
+
 // ── Fetch ────────────────────────────────────────────────────────────────
 
 interface FetchOpts extends RequestInit {
@@ -537,6 +552,19 @@ export const api = {
           total_interactions: number;
         };
       }>(`/api/scheduled-reels/${id}/insights`);
+    },
+  },
+
+  referencePages: {
+    list() { return req<ReferencePagesList>("/api/reference-pages"); },
+    add(ig_handle: string) {
+      return req<ReferencePage>("/api/reference-pages", {
+        method: "POST",
+        body: JSON.stringify({ ig_handle }),
+      });
+    },
+    remove(id: string) {
+      return req<void>(`/api/reference-pages/${id}`, { method: "DELETE" });
     },
   },
 };

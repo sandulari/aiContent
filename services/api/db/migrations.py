@@ -328,6 +328,47 @@ MIGRATION_STATEMENTS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_user_templates_master
     ON user_templates (id) WHERE is_master = TRUE
     """,
+    # reference_pages: per-user inspiration list for the new per-page
+    # discovery pipeline. Capped at 5 rows per user via a trigger so the
+    # cap holds even under concurrent inserts that both passed the
+    # service-layer count check. Kept separate from user_pages so the
+    # legacy niche-based recommendation flow that reads page_type='reference'
+    # is unaffected.
+    """
+    CREATE TABLE IF NOT EXISTS reference_pages (
+        id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        ig_handle           VARCHAR(200) NOT NULL,
+        ig_user_id          VARCHAR(50),
+        ig_display_name     VARCHAR(200),
+        ig_profile_pic_url  TEXT,
+        added_at            TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_reference_pages_user_handle UNIQUE (user_id, ig_handle)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_reference_pages_user_added
+    ON reference_pages(user_id, added_at DESC)
+    """,
+    """
+    CREATE OR REPLACE FUNCTION enforce_reference_pages_max() RETURNS TRIGGER AS $$
+    BEGIN
+        IF (SELECT COUNT(*) FROM reference_pages WHERE user_id = NEW.user_id) >= 5 THEN
+            RAISE EXCEPTION 'max 5 reference pages per user'
+                USING ERRCODE = 'check_violation';
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """,
+    """
+    DROP TRIGGER IF EXISTS trg_reference_pages_max ON reference_pages
+    """,
+    """
+    CREATE TRIGGER trg_reference_pages_max
+        BEFORE INSERT ON reference_pages
+        FOR EACH ROW EXECUTE FUNCTION enforce_reference_pages_max()
+    """,
 ]
 
 

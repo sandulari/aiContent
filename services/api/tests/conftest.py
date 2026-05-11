@@ -27,8 +27,13 @@ os.environ.setdefault("COOKIE_SECURE", "false")
 
 TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL",
-    "postgresql+asyncpg://vre_user:vre_pass@localhost:5432/vre_test",
+    "postgresql+asyncpg://vre_user:vre_pass@localhost:5433/vre_test",
 )
+# Point the production engine (db.session) at the same test DB so FastAPI's
+# lifespan can run migrations + seed master templates without hitting the
+# real database. The override on `get_db` keeps actual test transactions on
+# the conftest-managed engine instead.
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -71,7 +76,14 @@ async def db_session(_engine):
 
     async with _engine.connect() as conn:
         trans = await conn.begin()
-        session = AsyncSession(bind=conn, expire_on_commit=False)
+        # `join_transaction_mode="create_savepoint"` lets router code that
+        # calls `db.rollback()` (e.g. IntegrityError handlers) only undo a
+        # SAVEPOINT instead of nuking the test's outer transaction.
+        session = AsyncSession(
+            bind=conn,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
         try:
             yield session
         finally:
