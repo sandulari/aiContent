@@ -19,6 +19,7 @@ from models.user_page_reel import UserPageReel
 from models.reel_profile import ReelProfile
 from models.scheduled_reel import ScheduledReel
 from models.reference_page import ReferencePage
+from models.discovery_filter import DiscoveryFilter
 
 __all__ = [
     "Base", "UUIDMixin",
@@ -31,4 +32,5 @@ __all__ = [
     "UserPageReel", "ReelProfile",
     "ScheduledReel",
     "ReferencePage",
+    "DiscoveryFilter",
 ]

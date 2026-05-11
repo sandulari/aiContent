@@ -7,7 +7,7 @@ from db.migrations import run_migrations
 from db.seed_master_templates import seed_master_templates
 from models.base import Base
 import models  # noqa: F401 — triggers registration of every SQLAlchemy model
-from routers import auth, my_pages, recommendations, reels, templates, exports, ai, files, niches, jobs, ig_oauth, scheduled_reels, reference_pages
+from routers import auth, my_pages, recommendations, reels, templates, exports, ai, files, niches, jobs, ig_oauth, scheduled_reels, reference_pages, discovery_filters
 
 
 @asynccontextmanager
@@ -41,6 +41,7 @@ app.include_router(jobs.router)
 app.include_router(ig_oauth.router)
 app.include_router(scheduled_reels.router)
 app.include_router(reference_pages.router)
+app.include_router(discovery_filters.router)
 
 
 @app.get("/api/health")

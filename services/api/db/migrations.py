@@ -369,6 +369,32 @@ MIGRATION_STATEMENTS: list[str] = [
         BEFORE INSERT ON reference_pages
         FOR EACH ROW EXECUTE FUNCTION enforce_reference_pages_max()
     """,
+    # discovery_filters: one row per user controlling which reels surface
+    # in the per-reference-page discovery feed. UNIQUE(user_id) so PUT can
+    # use INSERT ON CONFLICT UPDATE for clean upsert. CHECK constraints
+    # are the source of truth — Pydantic mirrors them for friendlier errors.
+    """
+    CREATE TABLE IF NOT EXISTS discovery_filters (
+        id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id             UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+        min_views           BIGINT NOT NULL DEFAULT 1000
+            CONSTRAINT ck_discovery_filters_min_views CHECK (min_views >= 0),
+        min_likes           BIGINT NOT NULL DEFAULT 10
+            CONSTRAINT ck_discovery_filters_min_likes CHECK (min_likes >= 0),
+        min_comments        BIGINT NOT NULL DEFAULT 0
+            CONSTRAINT ck_discovery_filters_min_comments CHECK (min_comments >= 0),
+        min_engagement_rate DOUBLE PRECISION NOT NULL DEFAULT 0.0
+            CONSTRAINT ck_discovery_filters_engagement_rate
+            CHECK (min_engagement_rate >= 0 AND min_engagement_rate <= 1),
+        max_age_days        INTEGER NOT NULL DEFAULT 60
+            CONSTRAINT ck_discovery_filters_max_age_days
+            CHECK (max_age_days >= 1 AND max_age_days <= 365),
+        sort_by             VARCHAR(30) NOT NULL DEFAULT 'views_desc'
+            CONSTRAINT ck_discovery_filters_sort_by
+            CHECK (sort_by IN ('views_desc','posted_at_desc','engagement_desc','likes_desc','comments_desc')),
+        updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
 ]
 
 

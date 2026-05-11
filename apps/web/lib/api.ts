@@ -284,6 +284,38 @@ export interface ReferencePagesList {
   max: number;
 }
 
+export type DiscoverySortBy =
+  | "views_desc"
+  | "posted_at_desc"
+  | "engagement_desc"
+  | "likes_desc"
+  | "comments_desc";
+
+export interface DiscoveryFilter {
+  min_views: number;
+  min_likes: number;
+  min_comments: number;
+  min_engagement_rate: number; // 0..1
+  max_age_days: number;        // 1..365
+  sort_by: DiscoverySortBy;
+  updated_at: string | null;
+  is_default: boolean;
+}
+
+export interface DiscoveryFilterPayload {
+  min_views?: number;
+  min_likes?: number;
+  min_comments?: number;
+  min_engagement_rate?: number;
+  max_age_days?: number;
+  sort_by?: DiscoverySortBy;
+}
+
+export interface DiscoveryFilterPreview {
+  count: number;
+  has_cache: boolean;
+}
+
 // ── Fetch ────────────────────────────────────────────────────────────────
 
 interface FetchOpts extends RequestInit {
@@ -565,6 +597,22 @@ export const api = {
     },
     remove(id: string) {
       return req<void>(`/api/reference-pages/${id}`, { method: "DELETE" });
+    },
+  },
+
+  discoveryFilter: {
+    get() { return req<DiscoveryFilter>("/api/discovery-filter"); },
+    save(payload: DiscoveryFilterPayload) {
+      return req<DiscoveryFilter>("/api/discovery-filter", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+    },
+    preview(payload: DiscoveryFilterPayload) {
+      return req<DiscoveryFilterPreview>("/api/discovery-filter/preview", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
     },
   },
 };
