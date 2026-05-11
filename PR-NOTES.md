@@ -15,7 +15,7 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 | `34522ff` | feat | download pipeline (Task 1.5) |
 | `d445d36` | feat | off-IG similar content (Task 1.6) + ARCHITECTURE.md |
 | `67dcfb8` | feat | editor handoff + scheduler tests (Task 1.7) |
-| _pending_ | feat | CSRF double-submit cookie (Task 2.1) |
+| `004f062` | feat | CSRF double-submit cookie (Task 2.1) |
 
 ## What's in this PR (so far)
 
