@@ -10,7 +10,8 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 | `8d7cd43` | feat | reference pages model + UI (Task 1.1) |
 | `5f66f96` | feat | discovery filter config (Task 1.2) |
 | `6b4bd36` | feat | reference_reels cache + discovery service module (Task 1.3a) |
-| _pending_ | feat | discovery endpoints + rate limiter + filter preview wiring (Task 1.3b) |
+| `8d817ab` | feat | discovery endpoints + rate limiter + filter preview wiring (Task 1.3b) |
+| _pending_ | feat | discovery UI page (Task 1.4) |
 
 ## What's in this PR (so far)
 
@@ -202,7 +203,6 @@ Tests:
 `requirements-test.txt` now also pins `fakeredis==2.30.0`.
 
 ## Still pending (in this branch)
-- 1.4 Discovery UI
 - 1.5 Download pipeline (existing code present — needs idempotency wiring)
 - 1.6 Off-IG similar content
 - 1.7 Editor handoff + scheduler (largely already built)
