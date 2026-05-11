@@ -393,6 +393,20 @@ export class ApiError extends Error {
 
 let _refreshing: Promise<void> | null = null;
 
+// CSRF — read the `csrf_token` cookie that the server set on a prior
+// safe request, and echo it back in `X-CSRF-Token` on every mutating
+// request. The cookie is intentionally NOT HttpOnly (see
+// services/api/middleware/csrf.py). If we somehow don't have one yet
+// (first paint, before any GET landed), we still send the request and
+// let the server's response set it for the next call.
+const _MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+function _readCsrfCookie(): string | null {
+  if (typeof document === "undefined") return null; // SSR
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 async function _doFetch<T>(url: string, init: RequestInit, headers: Record<string, string>): Promise<T> {
   const res = await fetch(url, { ...init, headers, credentials: "include" });
   if (!res.ok) {
@@ -417,6 +431,12 @@ async function req<T>(endpoint: string, opts: FetchOpts = {}): Promise<T> {
   }
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(init.headers as Record<string, string>) };
   if (init.body instanceof FormData) delete headers["Content-Type"];
+
+  const method = (init.method || "GET").toUpperCase();
+  if (_MUTATING_METHODS.has(method) && !headers["X-CSRF-Token"]) {
+    const csrf = _readCsrfCookie();
+    if (csrf) headers["X-CSRF-Token"] = csrf;
+  }
 
   try {
     return await _doFetch<T>(url, init, headers);

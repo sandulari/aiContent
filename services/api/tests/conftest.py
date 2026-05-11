@@ -129,11 +129,21 @@ async def authed_user(db_session):
 
 @pytest_asyncio.fixture
 async def authed_client(client, authed_user):
-    """Test client carrying a valid access-token cookie for ``authed_user``."""
+    """Test client carrying a valid access-token cookie for ``authed_user``.
+
+    Also pre-seeds a known ``csrf_token`` cookie and sends the matching
+    ``X-CSRF-Token`` header on every request, so the CSRF middleware (Task
+    2.1) doesn't 403 the existing mutating tests. Tests that want to
+    exercise the CSRF rejection path should clear/override these directly.
+    """
     from middleware.auth import create_access_token
+    from middleware.csrf import CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 
     token = create_access_token(authed_user.id, role=authed_user.role)
     client.cookies.set("access_token", token)
+    csrf = "test-csrf-token"
+    client.cookies.set(CSRF_COOKIE_NAME, csrf)
+    client.headers.update({CSRF_HEADER_NAME: csrf})
     return client
 
 

@@ -28,6 +28,14 @@ app.add_middleware(
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
+# CSRF (Task 2.1) — double-submit cookie on mutating routes. Must be
+# added AFTER CORS so the cookie is set on the response after CORS
+# headers have been merged. Order matters: Starlette runs middleware
+# in the REVERSE order they're added, so this entry runs before
+# CORSMiddleware in the request path and after it in the response path.
+from middleware.csrf import CSRFMiddleware
+app.add_middleware(CSRFMiddleware)
+
 app.include_router(auth.router)
 app.include_router(my_pages.router)
 app.include_router(recommendations.router)

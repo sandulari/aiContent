@@ -15,6 +15,7 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 | `34522ff` | feat | download pipeline (Task 1.5) |
 | `d445d36` | feat | off-IG similar content (Task 1.6) + ARCHITECTURE.md |
 | `67dcfb8` | feat | editor handoff + scheduler tests (Task 1.7) |
+| _pending_ | feat | CSRF double-submit cookie (Task 2.1) |
 
 ## What's in this PR (so far)
 
@@ -352,7 +353,59 @@ uses `vi.hoisted` to stub next/navigation's useRouter.
     -> downloads.minio_key). Bounded refactor — the migration plan
     is in the issue.
 
+### `feat: CSRF double-submit cookie (Task 2.1)`
+
+Double-submit cookie pattern for cross-site request forgery protection on
+authenticated mutating routes.
+
+**Middleware** (`services/api/middleware/csrf.py`):
+- New `CSRFMiddleware` registered AFTER `CORSMiddleware` in `main.py`
+  (Starlette runs middleware in REVERSE add order, so this runs *before*
+  CORS in the request path and *after* it in the response path — the
+  cookie ends up on the response after CORS headers have been merged).
+- On `POST/PUT/PATCH/DELETE` for an authenticated request: compares
+  the `X-CSRF-Token` header against the `csrf_token` cookie via
+  `hmac.compare_digest` (timing-safe). Missing/mismatch -> 403 with
+  `{"code": "csrf_failure"}`.
+- On every response: if the request didn't carry a `csrf_token`
+  cookie, sets a fresh one — 256 bits of `secrets.token_urlsafe`,
+  `SameSite=Lax`, `Secure` in prod, **not** HttpOnly (JS must read
+  it to echo back in the header).
+- **Exemptions**:
+  - Safe methods (`GET`, `HEAD`, `OPTIONS`)
+  - `/api/auth/login`, `/register`, `/refresh`, `/forgot-password`,
+    `/reset-password` (no session yet — nothing to forge against)
+  - `/api/ig/oauth/*` prefix (Meta-initiated redirect from another
+    origin couldn't carry our CSRF cookie; the start endpoint has
+    its own signed HMAC nonce)
+  - Requests with no `access_token` cookie — skip CSRF so the auth
+    dependency returns the real 401 instead of a misleading 403
+
+**Frontend** (`apps/web/lib/api.ts`):
+- `req<T>` now reads the `csrf_token` cookie via `document.cookie`
+  and injects `X-CSRF-Token` on every mutating request automatically.
+- SSR-safe (returns `null` when `document` is undefined).
+- First-page-load path: if no cookie yet, the request goes through
+  unauthenticated paths or carries no header; the GET that fetches
+  the page receives one in `Set-Cookie`, so the *next* mutating
+  request has a token to echo.
+
+**Tests** (`services/api/tests/test_csrf.py`, 7 cases):
+- spec bullets: missing token rejected (403), wrong token rejected
+  (403), valid token accepted (201)
+- exemptions: GET is safe (200), unauthenticated POST gets the auth
+  layer's 401 not a CSRF 403, `/api/auth/login` exempt (auth
+  response not csrf 403)
+- cookie issuance: `csrf_token` set on response when request had
+  none; cookie has no `HttpOnly` flag (JS must read it)
+
+**Conftest update**: `authed_client` pre-seeds a known `csrf_token`
+cookie + matching `X-CSRF-Token` default header so the ~130 existing
+mutating tests don't all 403. Tests that exercise the rejection path
+use the raw `client` fixture and set the access-token cookie
+themselves so they can control the CSRF state explicitly.
+
 ## Still pending (in this branch)
-- Phase 2 hardening (CSRF, idempotency, XSS, refresh-token reuse-detection,
+- Phase 2 hardening (idempotency, XSS, refresh-token reuse-detection,
   CORS allowlist, CSP)
 - Worker exporter dispatch for reference_reel_id (FOUND-ISSUES #7)
