@@ -36,6 +36,9 @@ from models.download import Download
 from models.reference_page import ReferencePage
 from models.reference_reel import ReferenceReel
 from models.user import User
+from models.user_export import UserExport
+from models.user_page import UserPage
+from models.user_template import UserTemplate
 from services.discovery_download import perform_download
 from services.offsite_search import (
     TikTokSearchError,
@@ -416,6 +419,147 @@ async def _perform_download_background(download_id: UUID) -> None:
         except Exception:  # noqa: BLE001
             logger.exception("download %s wrapper failed", download_id)
             await db.rollback()
+
+
+# ---------------------------------------------------------------------------
+# POST /api/discovery/downloads/{id}/edit  (Task 1.7 — editor handoff)
+# ---------------------------------------------------------------------------
+
+
+def _export_response_dict(e: UserExport) -> dict:
+    """Minimal payload — the caller's next step is router.push to
+    /editor/{id}, so only the id is required. Carry status + the two
+    source FKs so the frontend can rehydrate without a second GET."""
+    return {
+        "id": str(e.id),
+        "viral_reel_id": str(e.viral_reel_id) if e.viral_reel_id else None,
+        "reference_reel_id": (
+            str(e.reference_reel_id) if e.reference_reel_id else None
+        ),
+        "template_id": str(e.template_id),
+        "export_status": e.export_status,
+    }
+
+
+@router.post("/downloads/{download_id}/edit", status_code=status.HTTP_201_CREATED)
+async def edit_download(
+    download_id: UUID,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Open a completed download in the editor.
+
+    Creates a ``UserExport`` row tied to the underlying ``reference_reel``
+    so the existing ``/editor/{id}`` route can drive it. Per Task 1.7's
+    "Do NOT redesign the editor" rule we only stand up the row; the editor
+    UI and downstream rendering remain untouched (worker exporter handling
+    of reference_reel_id is a follow-up — FOUND-ISSUES).
+
+    Idempotent: re-posting returns the existing ``UserExport`` for this
+    (user, reference_reel) pair instead of creating a duplicate, so a
+    double-click on Edit doesn't fork the editing session.
+    """
+    download = (
+        await db.execute(
+            select(Download).where(
+                Download.id == download_id,
+                Download.user_id == current_user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not download:
+        raise HTTPException(status_code=404, detail="Download not found")
+    if download.status != "done":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "not_ready",
+                "detail": f"Download status is '{download.status}' — wait for it to complete.",
+            },
+        )
+
+    # Idempotency: same (user, reference_reel) -> same UserExport.
+    existing = (
+        await db.execute(
+            select(UserExport).where(
+                UserExport.user_id == current_user.id,
+                UserExport.reference_reel_id == download.reference_reel_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing:
+        response.status_code = status.HTTP_200_OK
+        return _export_response_dict(existing)
+
+    # Template: prefer user's default, fall back to first master template.
+    # Master templates are seeded on API boot via seed_master_templates
+    # so the fallback always has something.
+    template = (
+        await db.execute(
+            select(UserTemplate).where(
+                UserTemplate.user_id == current_user.id,
+                UserTemplate.is_default.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if not template:
+        template = (
+            await db.execute(
+                select(UserTemplate)
+                .where(UserTemplate.is_master.is_(True))
+                .order_by(UserTemplate.created_at.asc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    if not template:
+        raise HTTPException(
+            status_code=500,
+            detail="No templates available — master templates not seeded.",
+        )
+
+    # Auto-attach the user's first 'own' IG page so AI text generation +
+    # caption defaults know which voice to use. Optional — None is fine.
+    own_page_id = (
+        await db.execute(
+            select(UserPage.id)
+            .where(
+                UserPage.user_id == current_user.id,
+                UserPage.page_type == "own",
+                UserPage.is_active.is_(True),
+            )
+            .order_by(UserPage.created_at.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    # Seed text from the reel's caption so the editor opens with a
+    # sensible starting point rather than empty fields.
+    caption = ""
+    reel = (
+        await db.execute(
+            select(ReferenceReel).where(
+                ReferenceReel.id == download.reference_reel_id
+            )
+        )
+    ).scalar_one_or_none()
+    if reel and reel.caption:
+        caption = reel.caption[:200]
+
+    export = UserExport(
+        user_id=current_user.id,
+        user_page_id=own_page_id,
+        reference_reel_id=download.reference_reel_id,
+        template_id=template.id,
+        headline_text="",
+        subtitle_text="",
+        caption_text=caption or None,
+        export_status="editing",
+    )
+    db.add(export)
+    await db.flush()
+    await db.refresh(export)
+    return _export_response_dict(export)
 
 
 # ---------------------------------------------------------------------------

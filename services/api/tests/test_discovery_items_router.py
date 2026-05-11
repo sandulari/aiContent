@@ -622,3 +622,143 @@ async def test_similar_unauthenticated_401(client):
     from uuid import uuid4
     r = await client.get(f"/api/discovery/items/{uuid4()}/similar")
     assert r.status_code == 401
+
+
+# ===========================================================================
+# POST /api/discovery/downloads/{id}/edit  (Task 1.7 — editor handoff)
+# ===========================================================================
+
+
+async def _seed_completed_download(db_session, user):
+    """Seed a reference_page + reel + completed download for the user.
+    Returns the Download row."""
+    page = ReferencePage(user_id=user.id, ig_handle="natgeo")
+    db_session.add(page)
+    await db_session.flush()
+    reel = _mk_reel(page.id, mid="m1", code="Caa")
+    db_session.add(reel)
+    await db_session.flush()
+    download = Download(
+        user_id=user.id,
+        reference_reel_id=reel.id,
+        status="done",
+        minio_key=f"discovery/{user.id}/dummy.mp4",
+        file_size_bytes=12345,
+    )
+    db_session.add(download)
+    await db_session.flush()
+    return download
+
+
+async def test_edit_creates_user_export_201(
+    authed_client, db_session, authed_user
+):
+    """First call: create a UserExport tied to the reference_reel."""
+    from models.user_export import UserExport
+
+    download = await _seed_completed_download(db_session, authed_user)
+
+    r = await authed_client.post(
+        f"/api/discovery/downloads/{download.id}/edit"
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["reference_reel_id"] == str(download.reference_reel_id)
+    assert body["viral_reel_id"] is None
+    assert body["export_status"] == "editing"
+    assert body["id"]
+
+    # Row really exists with the FK shape we promised.
+    export = (
+        await db_session.execute(
+            select(UserExport).where(UserExport.id == body["id"])
+        )
+    ).scalar_one()
+    assert export.reference_reel_id == download.reference_reel_id
+    assert export.viral_reel_id is None
+    assert export.user_id == authed_user.id
+
+
+async def test_edit_is_idempotent_returns_existing_200(
+    authed_client, db_session, authed_user
+):
+    from models.user_export import UserExport
+    from sqlalchemy import func
+
+    download = await _seed_completed_download(db_session, authed_user)
+
+    r1 = await authed_client.post(
+        f"/api/discovery/downloads/{download.id}/edit"
+    )
+    assert r1.status_code == 201
+    first_id = r1.json()["id"]
+
+    # Same download POSTed again: same UserExport, 200 (not 201).
+    r2 = await authed_client.post(
+        f"/api/discovery/downloads/{download.id}/edit"
+    )
+    assert r2.status_code == 200
+    assert r2.json()["id"] == first_id
+
+    count = (
+        await db_session.execute(
+            select(func.count()).select_from(UserExport).where(
+                UserExport.user_id == authed_user.id
+            )
+        )
+    ).scalar()
+    assert count == 1
+
+
+async def test_edit_409_when_download_not_done(
+    authed_client, db_session, authed_user
+):
+    page = ReferencePage(user_id=authed_user.id, ig_handle="x")
+    db_session.add(page)
+    await db_session.flush()
+    reel = _mk_reel(page.id, mid="m1", code="Caa")
+    db_session.add(reel)
+    await db_session.flush()
+    download = Download(
+        user_id=authed_user.id, reference_reel_id=reel.id, status="downloading",
+    )
+    db_session.add(download)
+    await db_session.flush()
+
+    r = await authed_client.post(f"/api/discovery/downloads/{download.id}/edit")
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "not_ready"
+
+
+async def test_edit_404_when_download_missing(authed_client):
+    from uuid import uuid4
+    r = await authed_client.post(f"/api/discovery/downloads/{uuid4()}/edit")
+    assert r.status_code == 404
+
+
+async def test_edit_404_when_download_belongs_to_another_user(
+    authed_client, db_session, other_authed_user
+):
+    page = ReferencePage(user_id=other_authed_user.id, ig_handle="nasa")
+    db_session.add(page)
+    await db_session.flush()
+    reel = _mk_reel(page.id, mid="m1", code="Cb")
+    db_session.add(reel)
+    await db_session.flush()
+    download = Download(
+        user_id=other_authed_user.id,
+        reference_reel_id=reel.id,
+        status="done",
+        minio_key="x",
+    )
+    db_session.add(download)
+    await db_session.flush()
+
+    r = await authed_client.post(f"/api/discovery/downloads/{download.id}/edit")
+    assert r.status_code == 404
+
+
+async def test_edit_unauthenticated_401(client):
+    from uuid import uuid4
+    r = await client.post(f"/api/discovery/downloads/{uuid4()}/edit")
+    assert r.status_code == 401

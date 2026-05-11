@@ -13,6 +13,13 @@ import userEvent from "@testing-library/user-event";
 import SourcesPage from "@/app/sources/page";
 import type { DiscoveryItem, DiscoveryItemsResponse } from "@/lib/api";
 
+// next/navigation isn't running in jsdom — stub useRouter so the page's
+// router.push calls land in a spy we can assert against.
+const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: pushMock, replace: vi.fn(), back: vi.fn() }),
+}));
+
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
@@ -29,6 +36,7 @@ vi.mock("@/lib/api", async () => {
         download: vi.fn(),
         downloadStatus: vi.fn(),
         findSimilar: vi.fn(),
+        edit: vi.fn(),
       },
     },
   };
@@ -42,6 +50,7 @@ const dApi = api.discovery as {
   download: Mock;
   downloadStatus: Mock;
   findSimilar: Mock;
+  edit: Mock;
 };
 const fApi = api.discoveryFilter as { get: Mock; save: Mock; preview: Mock };
 
@@ -92,6 +101,8 @@ beforeEach(() => {
   dApi.download.mockReset();
   dApi.downloadStatus.mockReset();
   dApi.findSimilar.mockReset();
+  dApi.edit.mockReset();
+  pushMock.mockReset();
   fApi.get.mockReset();
   fApi.save.mockReset();
   fApi.preview.mockReset();
@@ -336,6 +347,51 @@ describe("/sources page", () => {
         /too many.*similar.*lookups/i,
       ),
     );
+  });
+
+  // Task 1.7 — once status=done, the button morphs and Edit routes to the editor
+  it("Edit click on a completed download navigates to /editor/{id}", async () => {
+    const item = mkItem("Cedit");
+    dApi.items.mockResolvedValue(itemsResponse([item]));
+    dApi.download.mockResolvedValue({
+      id: "dl-1",
+      reference_reel_id: "id-Cedit",
+      status: "done",
+      minio_key: "discovery/u/dl-1.mp4",
+      file_size_bytes: 12345,
+      error_message: null,
+      created_at: "2026-05-12T00:00:00Z",
+      updated_at: "2026-05-12T00:00:00Z",
+    });
+    dApi.edit.mockResolvedValue({
+      id: "export-42",
+      viral_reel_id: null,
+      reference_reel_id: "id-Cedit",
+      template_id: "tmpl-1",
+      export_status: "editing",
+    });
+    const user = userEvent.setup();
+
+    render(<SourcesPage />);
+    await waitFor(() => screen.getByTestId("sources-grid"));
+
+    // Click Download once -> download mock resolves with status=done ->
+    // the button slot morphs to "Edit".
+    await user.click(
+      screen.getByTestId(`source-download-${item.permalink}`),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByTestId(`source-download-${item.permalink}`),
+      ).toHaveTextContent("Edit"),
+    );
+
+    // Click "Edit" -> calls api.discovery.edit + navigates.
+    await user.click(
+      screen.getByTestId(`source-download-${item.permalink}`),
+    );
+    await waitFor(() => expect(dApi.edit).toHaveBeenCalledWith("dl-1"));
+    expect(pushMock).toHaveBeenCalledWith("/editor/export-42");
   });
 
   // Task 1.5 — download click + status reflects in the button

@@ -271,7 +271,87 @@ New top-level `ARCHITECTURE.md` documents:
   - Rate-limit caps
   - DiscoveryItem shape contract
 
+### `feat: editor handoff + scheduler tests (Task 1.7)`
+
+The scheduler was already built (`/api/scheduled-reels` + the publish
+worker — Phase 0 audit). The missing piece per spec was "wire downloaded
+items into the existing editor entrypoint" — `/editor/{exportId}`. The
+remaining work in this commit:
+
+**Editor handoff**:
+  - Schema relaxation: `user_exports.viral_reel_id` dropped to nullable
+    + new `reference_reel_id` column FK to reference_reels. CHECK
+    constraint enforces exactly-one-set so the worker can dispatch on
+    whichever FK is populated.
+  - `_export_to_dict` updated to emit both ids (null-safe).
+  - New endpoint `POST /api/discovery/downloads/{id}/edit`:
+    * 404 if not the caller's, 409 if status != "done"
+    * Idempotent on (user_id, reference_reel_id) — re-POSTing returns
+      the same UserExport with 200
+    * Template lookup prefers user's default, falls back to first
+      seeded master template
+    * Auto-attaches user's first 'own' page; seeds caption from the
+      reel's first 200 chars
+  - Frontend: SourcesCard's Download button morphs to **"Edit"** when
+    `downloadStatus="done"` AND an `onEdit` handler is provided.
+    Clicking it now dispatches to onEdit (not onDownload). Single
+    button slot per card — title attribute distinguishes the two modes.
+  - SourcesPage's `handleEdit` calls `api.discovery.edit(downloadId)`
+    then `router.push("/editor/{exportId}")`.
+
+**Scheduler tests** (existing endpoints had ZERO coverage — Phase 0
+finding). New `tests/test_scheduled_reels.py` covers the spec's
+required cases plus the supporting surface:
+
+  - **Timezone handling** (the spec's first bullet):
+    naive datetime → 422 from the Pydantic field_validator;
+    tz-aware → 201 with the response normalized to UTC.
+  - **Schedule window**: too-soon (lead < 2 min) → 400; too-far
+    (>60 days) → 400.
+  - **IG preconditions**: not connected → 409 ig_not_connected;
+    token expired → 409 ig_token_expired; PERSONAL account → 409
+    ig_account_type_personal.
+  - **Export readiness**: export not in `status="done"` → 404.
+  - **Double-publish prevention** (spec bullet):
+    DELETE on processing/published row → 409 not_cancellable; PATCH
+    on non-queued row → 409 not_editable; DELETE on queued → 204.
+  - **Retry semantics** (spec "failure -> retry with cap"):
+    failed row -> /retry resets attempt_count + last_error +
+    ig_container_id, status -> queued. Retry on any non-failed
+    status -> 409 not_retryable (parametrized across 4 states).
+  - **Status transitions surface** (spec bullet): list endpoint's
+    `counts` dict reflects ALL rows regardless of any filter applied
+    to `items` — the UI's status-badge contract.
+  - **Cross-tenant ownership**: A can't GET/DELETE/POST-retry B's
+    schedules (all 404, no existence leak).
+  - **Unauthenticated**: every endpoint returns 401 with no cookie.
+
+**Tests added for the editor handoff** (extending the discovery_items
+router tests):
+  - 201 on first POST + correct FK shape (`reference_reel_id` set,
+    `viral_reel_id` null) verified by re-fetching the UserExport row.
+  - 200 idempotent return on second POST + count assertion that only
+    one UserExport row exists.
+  - 409 not_ready when status="downloading" / "queued" / "failed".
+  - 404 missing download, 404 cross-tenant, 401 unauthenticated.
+
+**Card test**: one new case for "downloadStatus=done with onEdit"
+asserting the button reads "Edit", is enabled, and dispatches to
+onEdit (not onDownload).
+
+**Page test**: end-to-end "click Download, button morphs to Edit,
+click Edit, calls api.discovery.edit, navigates to /editor/{id}" —
+uses `vi.hoisted` to stub next/navigation's useRouter.
+
+**Docs**:
+  - ARCHITECTURE.md gets a new "Editor handoff" section describing
+    the polymorphic UserExport source FKs + the worker-side gap.
+  - FOUND-ISSUES #7 documents the exporter follow-up (worker reads
+    source via viral_reel_id; needs a branch for reference_reel_id
+    -> downloads.minio_key). Bounded refactor — the migration plan
+    is in the issue.
+
 ## Still pending (in this branch)
-- 1.7 Editor handoff + scheduler (largely already built)
 - Phase 2 hardening (CSRF, idempotency, XSS, refresh-token reuse-detection,
   CORS allowlist, CSP)
+- Worker exporter dispatch for reference_reel_id (FOUND-ISSUES #7)

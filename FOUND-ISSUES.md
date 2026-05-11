@@ -109,7 +109,38 @@ mirrors `fetch_handle_reels` with sync httpx + sync SQLAlchemy session.
 compose's `worker-enhancer` needs `queue.discovery_v2` appended to its
 `-Q` flag (issue #1 above is the same shape — easy to miss).
 
-## 7. `apps/web/lib/api.ts` token refresh treats _every_ 401 as a refresh trigger
+## 7. Worker exporter doesn't dispatch on `user_exports.reference_reel_id`
+
+Task 1.7 makes `user_exports.viral_reel_id` nullable and adds a
+`reference_reel_id` column so a download-sourced UserExport can drive
+the existing `/editor/{id}` route. The CHECK constraint ensures exactly
+one source FK is populated.
+
+The router-level changes are done. The worker exporter
+(`services/worker/tasks/exporter.py`) still reads the source video by
+following `user_exports.viral_reel_id -> viral_reels -> video_files`.
+For a discovery-download UserExport that join is empty, so a Render
+click on a download-sourced export will fail to produce an MP4 until
+the exporter learns to branch:
+
+```
+if user_exports.reference_reel_id IS NOT NULL:
+    source_minio_key = (
+        SELECT minio_key FROM downloads
+        WHERE reference_reel_id = user_exports.reference_reel_id
+          AND user_id = user_exports.user_id
+          AND status = 'done'
+    )
+else:
+    source_minio_key = (... existing viral_reels -> video_files lookup ...)
+```
+
+The download row already lives at `discovery/{user_id}/{download_id}.mp4`
+in the `videos` MinIO bucket, so the fetch is a single SELECT. Editing
+the source video in the editor UI (preview, trim, overlay) is unaffected
+— it only breaks at render-export time.
+
+## 8. `apps/web/lib/api.ts` token refresh treats _every_ 401 as a refresh trigger
 
 The retry-on-401 logic doesn't distinguish between "your access token
 expired" and "you tried to access something you don't own". A 401 from

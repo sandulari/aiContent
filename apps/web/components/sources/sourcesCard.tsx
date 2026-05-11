@@ -12,24 +12,35 @@ interface SourcesCardProps {
   onOpenOnIG: (item: DiscoveryItem) => void;
   onDownload?: (item: DiscoveryItem) => void;
   onFindSimilar?: (item: DiscoveryItem) => void;
+  /** Called when the user clicks Edit (only fired when downloadStatus
+   * is "done" + an onEdit handler is provided). Task 1.7. */
+  onEdit?: (item: DiscoveryItem) => void;
   /** Current download status for this item, if any. Drives the Download
    * button's label + enabled state — Task 1.5. */
   downloadStatus?: DownloadStatus | null;
 }
 
-function downloadButtonLabel(status: DownloadStatus | null | undefined): string {
+function downloadButtonLabel(
+  status: DownloadStatus | null | undefined,
+  hasEdit: boolean,
+): string {
   if (status === "queued" || status === "downloading") return "Downloading…";
-  if (status === "done") return "Downloaded";
+  if (status === "done") return hasEdit ? "Edit" : "Downloaded";
   if (status === "failed") return "Retry";
   return "Download";
 }
 
 function downloadButtonDisabled(
   status: DownloadStatus | null | undefined,
-  hasHandler: boolean,
+  hasDownloadHandler: boolean,
+  hasEditHandler: boolean,
 ): boolean {
-  if (!hasHandler) return true; // Task 1.5 not wired by caller
-  if (status === "queued" || status === "downloading" || status === "done") return true;
+  // No download handler at all (Task 1.5 not wired by caller).
+  if (!hasDownloadHandler && status !== "done") return true;
+  // Once done, button morphs into "Edit"; only clickable if onEdit was wired.
+  if (status === "done") return !hasEditHandler;
+  // In-flight: disabled.
+  if (status === "queued" || status === "downloading") return true;
   return false;
 }
 
@@ -53,11 +64,26 @@ export function SourcesCard({
   onOpenOnIG,
   onDownload,
   onFindSimilar,
+  onEdit,
   downloadStatus,
 }: SourcesCardProps) {
   const downloadEnabled = onDownload !== undefined;
   const findSimilarEnabled = onFindSimilar !== undefined;
-  const downloadDisabled = downloadButtonDisabled(downloadStatus, downloadEnabled);
+  const editEnabled = onEdit !== undefined;
+  const downloadDisabled = downloadButtonDisabled(
+    downloadStatus,
+    downloadEnabled,
+    editEnabled,
+  );
+
+  // Single button slot dispatches by status: done -> onEdit, else onDownload.
+  const handlePrimaryClick = () => {
+    if (downloadStatus === "done" && editEnabled) {
+      onEdit?.(item);
+      return;
+    }
+    onDownload?.(item);
+  };
 
   return (
     <article
@@ -165,19 +191,19 @@ export function SourcesCard({
             size="sm"
             variant="ghost"
             disabled={downloadDisabled}
-            onClick={() => onDownload?.(item)}
+            onClick={handlePrimaryClick}
             data-testid={`source-download-${item.permalink}`}
             title={
-              downloadEnabled
-                ? downloadStatus === "failed"
-                  ? item.id
-                    ? "Retry download"
-                    : "Download"
-                  : "Download"
+              downloadStatus === "done"
+                ? editEnabled
+                  ? "Open in editor"
+                  : "Downloaded — Edit lands in Task 1.7"
+                : downloadEnabled
+                ? "Download"
                 : "Download lands in Task 1.5"
             }
           >
-            {downloadButtonLabel(downloadStatus)}
+            {downloadButtonLabel(downloadStatus, editEnabled)}
           </Button>
           <Button
             size="sm"

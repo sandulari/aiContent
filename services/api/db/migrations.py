@@ -455,6 +455,33 @@ MIGRATION_STATEMENTS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_downloads_user_created
     ON downloads(user_id, created_at DESC)
     """,
+    # user_exports source polymorphism (Task 1.7 — editor handoff).
+    # Existing rows source from `viral_reel_id`; new rows from Discovery
+    # downloads source from `reference_reel_id`. A CHECK enforces exactly
+    # one populated so the worker exporter can dispatch on whichever FK
+    # is set without worrying about ambiguity.
+    """
+    ALTER TABLE user_exports ALTER COLUMN viral_reel_id DROP NOT NULL
+    """,
+    """
+    ALTER TABLE user_exports
+    ADD COLUMN IF NOT EXISTS reference_reel_id UUID
+        REFERENCES reference_reels(id) ON DELETE CASCADE
+    """,
+    """
+    ALTER TABLE user_exports DROP CONSTRAINT IF EXISTS ck_user_exports_source
+    """,
+    """
+    ALTER TABLE user_exports
+    ADD CONSTRAINT ck_user_exports_source
+    CHECK (
+        (viral_reel_id IS NOT NULL)::int + (reference_reel_id IS NOT NULL)::int = 1
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_user_exports_reference_reel
+    ON user_exports(reference_reel_id)
+    """,
 ]
 
 

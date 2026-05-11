@@ -129,6 +129,33 @@ counter without a TTL.
 429 responses include `retry_after` (seconds) so the UI can render a
 "try again in Xs" message.
 
+## Editor handoff (Task 1.7)
+
+The student's path from a downloaded reel to the editor reuses the
+existing `/editor/{export_id}` route. `user_exports` is polymorphic by
+source: legacy niche-discovery exports carry `viral_reel_id`, new
+discovery-download exports carry `reference_reel_id`. A DB-level CHECK
+enforces exactly one is set:
+
+```sql
+CHECK ((viral_reel_id IS NOT NULL)::int + (reference_reel_id IS NOT NULL)::int = 1)
+```
+
+`POST /api/discovery/downloads/{id}/edit` is the handoff:
+- 404 if the download isn't the caller's
+- 409 if the download isn't `status="done"` yet
+- Idempotent on (user_id, reference_reel_id) — re-POSTing returns the
+  existing `UserExport` with 200 instead of creating a duplicate
+
+Template selection: prefer the user's default; fall back to the first
+seeded master template; 500 if neither exists.
+
+Worker exporter (`services/worker/tasks/exporter.py`) still loads the
+source video via `viral_reel_id -> viral_reels -> video_files`. For a
+discovery-download export the source lives in the `downloads.minio_key`
+slot — the exporter needs a one-shot branch on which FK is populated.
+FOUND-ISSUES #7 has the patch.
+
 ## DiscoveryItem shape
 
 One dataclass + TS interface, used everywhere. Carries `id` (the

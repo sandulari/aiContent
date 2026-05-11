@@ -11,6 +11,7 @@ interface SourcesGridProps {
   onOpenOnIG: (item: DiscoveryItem) => void;
   onDownload?: (item: DiscoveryItem) => void;
   onFindSimilar?: (item: DiscoveryItem) => void;
+  onEdit?: (item: DiscoveryItem) => void;
   /** Map of reference_reel_id -> current DownloadStatus. */
   downloadStatuses?: Map<string, DownloadStatus>;
 }
@@ -27,6 +28,7 @@ export function SourcesGrid({
   onOpenOnIG,
   onDownload,
   onFindSimilar,
+  onEdit,
   downloadStatuses,
 }: SourcesGridProps) {
   return (
@@ -43,6 +45,7 @@ export function SourcesGrid({
           onOpenOnIG={onOpenOnIG}
           onDownload={onDownload}
           onFindSimilar={onFindSimilar}
+          onEdit={onEdit}
           downloadStatus={item.id ? downloadStatuses?.get(item.id) ?? null : null}
         />
       ))}

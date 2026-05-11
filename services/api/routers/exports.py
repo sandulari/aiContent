@@ -561,7 +561,12 @@ def _export_to_dict(e: UserExport) -> dict:
     return {
         "id": str(e.id), "user_id": str(e.user_id),
         "user_page_id": str(e.user_page_id) if e.user_page_id else None,
-        "viral_reel_id": str(e.viral_reel_id), "template_id": str(e.template_id),
+        # Source is polymorphic (Task 1.7): legacy exports carry viral_reel_id,
+        # new discovery-download exports carry reference_reel_id. Exactly
+        # one is set per the CHECK constraint; the other is None.
+        "viral_reel_id": str(e.viral_reel_id) if e.viral_reel_id else None,
+        "reference_reel_id": str(e.reference_reel_id) if e.reference_reel_id else None,
+        "template_id": str(e.template_id),
         "headline_text": e.headline_text, "headline_style": e.headline_style,
         "subtitle_text": e.subtitle_text, "subtitle_style": e.subtitle_style,
         "caption_text": e.caption_text,

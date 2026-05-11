@@ -194,7 +194,7 @@ describe("SourcesCard", () => {
     ["done", "Downloaded", true],
     ["failed", "Retry", false],
   ] as const)(
-    "downloadStatus=%s -> label '%s' / disabled=%s",
+    "downloadStatus=%s without onEdit -> label '%s' / disabled=%s",
     (statusValue, expectedLabel, expectedDisabled) => {
       render(
         <SourcesCard
@@ -215,4 +215,30 @@ describe("SourcesCard", () => {
       }
     },
   );
+
+  // Task 1.7 — done + onEdit -> button morphs to "Edit" and fires onEdit
+  it("downloadStatus=done with onEdit -> label 'Edit', enabled, fires onEdit", async () => {
+    const onEdit = vi.fn();
+    const onDownload = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SourcesCard
+        item={baseItem}
+        selected={false}
+        onToggleSelect={() => {}}
+        onOpenOnIG={() => {}}
+        onDownload={onDownload}
+        onEdit={onEdit}
+        downloadStatus="done"
+      />,
+    );
+    const btn = screen.getByTestId(`source-download-${baseItem.permalink}`);
+    expect(btn).toHaveTextContent("Edit");
+    expect(btn).not.toBeDisabled();
+
+    await user.click(btn);
+    expect(onEdit).toHaveBeenCalledWith(baseItem);
+    // The button no longer dispatches to onDownload once status is done.
+    expect(onDownload).not.toHaveBeenCalled();
+  });
 });

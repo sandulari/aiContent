@@ -351,6 +351,14 @@ export interface SimilarResponse {
   error: string | null;
 }
 
+export interface ExportHandoff {
+  id: string;
+  viral_reel_id: string | null;
+  reference_reel_id: string | null;
+  template_id: string;
+  export_status: string;
+}
+
 export interface DiscoveryItemsResponse {
   items: DiscoveryItem[];
   total: number;
@@ -686,6 +694,11 @@ export const api = {
     },
     findSimilar(reelId: string) {
       return req<SimilarResponse>(`/api/discovery/items/${reelId}/similar`);
+    },
+    edit(downloadId: string) {
+      return req<ExportHandoff>(`/api/discovery/downloads/${downloadId}/edit`, {
+        method: "POST",
+      });
     },
   },
 };

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { Card } from "@/components/ui/card";
 import { SourcesFilterBar } from "@/components/sources/sourcesFilterBar";
@@ -33,6 +34,7 @@ function isTerminalStatus(s: DownloadStatus): boolean {
  * to fetch. The user can click again if items haven't appeared yet.
  */
 export default function SourcesPage() {
+  const router = useRouter();
   const [items, setItems] = useState<DiscoveryItem[]>([]);
   const [total, setTotal] = useState(0);
   const [hasCache, setHasCache] = useState(false);
@@ -109,6 +111,21 @@ export default function SourcesPage() {
       setError(e?.message ?? "Download failed to start");
     }
   }, []);
+
+  const handleEdit = useCallback(
+    async (item: DiscoveryItem) => {
+      if (!item.id) return;
+      const download = downloads.get(item.id);
+      if (!download || download.status !== "done") return;
+      try {
+        const handoff = await api.discovery.edit(download.id);
+        router.push(`/editor/${handoff.id}`);
+      } catch (e: any) {
+        setError(e?.message ?? "Failed to open editor");
+      }
+    },
+    [downloads, router],
+  );
 
   const handleFindSimilar = useCallback(async (item: DiscoveryItem) => {
     if (!item.id) return;
@@ -351,6 +368,7 @@ export default function SourcesPage() {
             onOpenOnIG={handleOpenOnIG}
             onDownload={handleDownload}
             onFindSimilar={handleFindSimilar}
+            onEdit={handleEdit}
             downloadStatuses={
               new Map(
                 Array.from(downloads.entries()).map(([k, v]) => [k, v.status]),
