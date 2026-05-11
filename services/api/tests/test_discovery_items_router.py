@@ -478,3 +478,147 @@ async def test_get_download_unauthenticated_401(client):
     from uuid import uuid4
     r = await client.get(f"/api/discovery/downloads/{uuid4()}")
     assert r.status_code == 401
+
+
+# ===========================================================================
+# GET /api/discovery/items/{id}/similar  (Task 1.6)
+# ===========================================================================
+
+
+async def _seed_reel_with_caption(db_session, user, *, caption: str, code: str = "Caa"):
+    page = ReferencePage(user_id=user.id, ig_handle="natgeo")
+    db_session.add(page)
+    await db_session.flush()
+    reel = ReferenceReel(
+        reference_page_id=page.id,
+        ig_media_id=f"m_{code}",
+        ig_code=code,
+        permalink=f"https://www.instagram.com/reel/{code}/",
+        caption=caption,
+        view_count=5000,
+        like_count=100,
+        comment_count=10,
+    )
+    db_session.add(reel)
+    await db_session.flush()
+    return reel
+
+
+async def test_similar_happy_path_returns_items(
+    authed_client, db_session, authed_user, fake_redis, monkeypatch
+):
+    reel = await _seed_reel_with_caption(
+        db_session, authed_user, caption="amazing #dance #viral"
+    )
+
+    captured_query: list[str] = []
+
+    async def fake_search(query, **kwargs):
+        captured_query.append(query)
+        return [
+            {
+                "tiktok_id": "7000",
+                "source_handle": "tiktoker",
+                "permalink": "https://www.tiktok.com/@tiktoker/video/7000",
+                "thumbnail_url": "https://cdn/x.jpg",
+                "caption": "tiktok caption",
+                "view_count": 9_000_000,
+                "like_count": 100_000,
+                "comment_count": 500,
+                "duration_seconds": 15,
+                "taken_at_unix": 1715000000,
+            }
+        ]
+
+    monkeypatch.setattr(items_mod, "search_similar_tiktok", fake_search)
+
+    r = await authed_client.get(f"/api/discovery/items/{reel.id}/similar")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["error"] is None
+    assert body["query"] == "dance viral"
+    assert body["source"]["handle"] == "natgeo"
+    assert body["source"]["permalink"] == reel.permalink
+    assert len(body["items"]) == 1
+    it = body["items"][0]
+    assert it["source_handle"] == "tiktoker"
+    assert it["permalink"].startswith("https://www.tiktok.com/")
+    assert it["views"] == 9_000_000
+
+    # Query was built from the reel's hashtags, not its ig_code.
+    assert captured_query == ["dance viral"]
+
+
+async def test_similar_error_fallback_returns_200_with_error(
+    authed_client, db_session, authed_user, fake_redis, monkeypatch
+):
+    from services.offsite_search import TikTokErrorKind, TikTokSearchError
+
+    reel = await _seed_reel_with_caption(
+        db_session, authed_user, caption="post #travel"
+    )
+
+    async def fake_search(query, **kwargs):
+        raise TikTokSearchError(TikTokErrorKind.RATE_LIMIT, "429", 429)
+
+    monkeypatch.setattr(items_mod, "search_similar_tiktok", fake_search)
+
+    r = await authed_client.get(f"/api/discovery/items/{reel.id}/similar")
+    # Spec: "error fallback" — surfaces as 200 with items=[] and an
+    # error flag so the UI can render an explainer rather than crash.
+    assert r.status_code == 200
+    body = r.json()
+    assert body["items"] == []
+    assert body["error"] == "rate_limit"
+
+
+async def test_similar_404_when_reel_not_found(
+    authed_client, fake_redis
+):
+    from uuid import uuid4
+    r = await authed_client.get(f"/api/discovery/items/{uuid4()}/similar")
+    assert r.status_code == 404
+
+
+async def test_similar_404_when_reel_belongs_to_another_user(
+    authed_client, db_session, other_authed_user, fake_redis
+):
+    page = ReferencePage(user_id=other_authed_user.id, ig_handle="nasa")
+    db_session.add(page)
+    await db_session.flush()
+    reel = _mk_reel(page.id, mid="m", code="Cother")
+    db_session.add(reel)
+    await db_session.flush()
+
+    r = await authed_client.get(f"/api/discovery/items/{reel.id}/similar")
+    assert r.status_code == 404
+
+
+async def test_similar_rate_limit_429(
+    authed_client, db_session, authed_user, fake_redis, monkeypatch
+):
+    """Exhaust the per-user cap then expect a 429 with retry_after."""
+    reel = await _seed_reel_with_caption(
+        db_session, authed_user, caption="#viral"
+    )
+
+    async def fake_search(query, **kwargs):
+        return []
+
+    monkeypatch.setattr(items_mod, "search_similar_tiktok", fake_search)
+
+    # The cap is 20 — exhaust then try one more.
+    for i in range(20):
+        r = await authed_client.get(f"/api/discovery/items/{reel.id}/similar")
+        assert r.status_code == 200, f"call {i} got {r.status_code}: {r.text}"
+
+    r = await authed_client.get(f"/api/discovery/items/{reel.id}/similar")
+    assert r.status_code == 429
+    assert r.json()["detail"]["code"] == "rate_limit"
+    assert r.json()["detail"]["retry_after"] > 0
+
+
+async def test_similar_unauthenticated_401(client):
+    from uuid import uuid4
+    r = await client.get(f"/api/discovery/items/{uuid4()}/similar")
+    assert r.status_code == 401

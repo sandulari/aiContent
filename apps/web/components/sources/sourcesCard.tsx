@@ -105,9 +105,15 @@ export function SourcesCard({
           {selected ? "✓" : ""}
         </button>
 
-        {/* Source handle — top-right */}
+        {/* Source handle — top-right. URL depends on the platform the
+            permalink points at so TikTok results from "Find similar"
+            don't link to an IG profile that doesn't exist. */}
         <a
-          href={`https://www.instagram.com/${item.source_handle}/`}
+          href={
+            item.permalink.includes("tiktok.com")
+              ? `https://www.tiktok.com/@${item.source_handle}`
+              : `https://www.instagram.com/${item.source_handle}/`
+          }
           target="_blank"
           rel="noopener noreferrer"
           className="absolute top-2 right-2 px-2 py-1 rounded bg-[#0d1117]/80 text-[10px] font-medium text-[#c9d1d9] hover:text-[#58a6ff] border border-[#30363d]"

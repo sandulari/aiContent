@@ -28,6 +28,7 @@ vi.mock("@/lib/api", async () => {
         refresh: vi.fn(),
         download: vi.fn(),
         downloadStatus: vi.fn(),
+        findSimilar: vi.fn(),
       },
     },
   };
@@ -40,6 +41,7 @@ const dApi = api.discovery as {
   refresh: Mock;
   download: Mock;
   downloadStatus: Mock;
+  findSimilar: Mock;
 };
 const fApi = api.discoveryFilter as { get: Mock; save: Mock; preview: Mock };
 
@@ -89,6 +91,7 @@ beforeEach(() => {
   dApi.refresh.mockReset();
   dApi.download.mockReset();
   dApi.downloadStatus.mockReset();
+  dApi.findSimilar.mockReset();
   fApi.get.mockReset();
   fApi.save.mockReset();
   fApi.preview.mockReset();
@@ -245,6 +248,93 @@ describe("/sources page", () => {
       expect(
         screen.getByTestId("sources-refresh-note"),
       ).toHaveTextContent(/add one first/i),
+    );
+  });
+
+  // Task 1.6 — Find similar opens an off-IG (TikTok) view
+  it("Find Similar click opens the similar view + renders TikTok items", async () => {
+    const item = mkItem("Csrc");
+    dApi.items.mockResolvedValue(itemsResponse([item]));
+    dApi.findSimilar.mockResolvedValue({
+      items: [
+        {
+          id: null,
+          source_handle: "tiktoker",
+          permalink: "https://www.tiktok.com/@tiktoker/video/7000",
+          media_url: null,
+          thumbnail: "https://cdn/t.jpg",
+          caption: "viral dance",
+          views: 9_000_000,
+          likes: 100_000,
+          comments: 500,
+          posted_at: "2026-05-01T00:00:00Z",
+          duration_seconds: 15,
+          score: 9_000_000,
+        },
+      ],
+      source: {
+        handle: item.source_handle,
+        permalink: item.permalink,
+      },
+      query: "dance viral",
+      error: null,
+    });
+    const user = userEvent.setup();
+
+    render(<SourcesPage />);
+    await waitFor(() => screen.getByTestId("sources-grid"));
+
+    await user.click(
+      screen.getByTestId(`source-similar-${item.permalink}`),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sources-similar-view")).toBeInTheDocument();
+    });
+    expect(dApi.findSimilar).toHaveBeenCalledWith(item.id);
+    expect(
+      screen.getByText(/dance viral/),
+    ).toBeInTheDocument();
+    // TikTok card rendered.
+    expect(
+      screen.getByTestId(
+        "source-card-https://www.tiktok.com/@tiktoker/video/7000",
+      ),
+    ).toBeInTheDocument();
+
+    // Back button restores the main feed.
+    await user.click(screen.getByTestId("sources-similar-back"));
+    await waitFor(() => {
+      expect(screen.getByTestId("sources-grid")).toBeInTheDocument();
+      expect(screen.queryByTestId("sources-similar-view")).toBeNull();
+    });
+  });
+
+  it("Find Similar with error renders the explainer card", async () => {
+    const item = mkItem("Cerr");
+    dApi.items.mockResolvedValue(itemsResponse([item]));
+    dApi.findSimilar.mockResolvedValue({
+      items: [],
+      source: {
+        handle: item.source_handle,
+        permalink: item.permalink,
+      },
+      query: "x",
+      error: "rate_limit",
+    });
+    const user = userEvent.setup();
+
+    render(<SourcesPage />);
+    await waitFor(() => screen.getByTestId("sources-grid"));
+
+    await user.click(
+      screen.getByTestId(`source-similar-${item.permalink}`),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("sources-similar-error")).toHaveTextContent(
+        /too many.*similar.*lookups/i,
+      ),
     );
   });
 

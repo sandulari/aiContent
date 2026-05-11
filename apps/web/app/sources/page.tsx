@@ -12,6 +12,7 @@ import {
   type DiscoveryItem,
   type Download,
   type DownloadStatus,
+  type SimilarResponse,
 } from "@/lib/api";
 
 const REFRESH_REFETCH_MS = 6000;
@@ -43,6 +44,13 @@ export default function SourcesPage() {
   // Map reference_reel_id -> latest Download row. Drives the card's
   // Download button label/disable state and the polling loop below.
   const [downloads, setDownloads] = useState<Map<string, Download>>(new Map());
+  // When non-null, the page renders the off-IG similar view instead of
+  // the main feed. ``sourceItem`` is the IG reel the user clicked Find
+  // Similar on; ``response`` is the API payload.
+  const [similar, setSimilar] = useState<
+    | { sourceItem: DiscoveryItem; response: SimilarResponse | null; loading: boolean }
+    | null
+  >(null);
 
   const loadItems = useCallback(async () => {
     setError(null);
@@ -102,6 +110,28 @@ export default function SourcesPage() {
     }
   }, []);
 
+  const handleFindSimilar = useCallback(async (item: DiscoveryItem) => {
+    if (!item.id) return;
+    setSimilar({ sourceItem: item, response: null, loading: true });
+    try {
+      const resp = await api.discovery.findSimilar(item.id);
+      setSimilar({ sourceItem: item, response: resp, loading: false });
+    } catch (e: any) {
+      setSimilar({
+        sourceItem: item,
+        response: {
+          items: [],
+          source: { handle: item.source_handle, permalink: item.permalink },
+          query: "",
+          error: e?.message ?? "Find similar failed",
+        },
+        loading: false,
+      });
+    }
+  }, []);
+
+  const exitSimilar = useCallback(() => setSimilar(null), []);
+
   // Poll non-terminal downloads every few seconds. Stops automatically
   // when every tracked download reaches done|failed.
   useEffect(() => {
@@ -157,6 +187,85 @@ export default function SourcesPage() {
     }
     setRefreshing(false);
   }, []);
+
+  // Similar mode renders a different surface: source banner + grid of
+  // off-IG (TikTok) items. Reuses SourcesGrid so the card components
+  // stay shared between the two modes.
+  if (similar) {
+    const errKey = similar.response?.error;
+    return (
+      <div className="p-8 max-w-7xl mx-auto space-y-6" data-testid="sources-similar-view">
+        <header className="flex items-center justify-between gap-4">
+          <div>
+            <button
+              onClick={exitSimilar}
+              data-testid="sources-similar-back"
+              className="text-xs text-[#58a6ff] hover:underline"
+            >
+              ← Back to feed
+            </button>
+            <h1 className="text-xl font-semibold text-[#e6edf3] mt-1">
+              Similar elsewhere
+            </h1>
+            <p className="text-sm text-[#484f58] mt-1">
+              TikTok results similar to{" "}
+              <a
+                href={similar.sourceItem.permalink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#58a6ff] hover:underline"
+              >
+                @{similar.sourceItem.source_handle}'s reel
+              </a>
+              .
+            </p>
+          </div>
+        </header>
+
+        {similar.loading ? (
+          <div className="py-12 text-center text-xs text-[#484f58]">Loading…</div>
+        ) : errKey ? (
+          <Card>
+            <p className="text-xs text-[#7d8590]" data-testid="sources-similar-error">
+              {errKey === "rate_limit"
+                ? "Too many similar-content lookups. Try again later."
+                : errKey === "no_query"
+                ? "This reel has no hashtags or keywords to search by."
+                : errKey === "timeout"
+                ? "TikTok search timed out. Try again."
+                : `TikTok search failed (${errKey}).`}
+            </p>
+          </Card>
+        ) : similar.response && similar.response.items.length === 0 ? (
+          <Card>
+            <p className="text-xs text-[#484f58] text-center py-6">
+              No similar content found for "{similar.response.query}".
+            </p>
+          </Card>
+        ) : (
+          similar.response && (
+            <>
+              <p className="text-xs text-[#7d8590]">
+                Searched TikTok for{" "}
+                <span className="text-[#e6edf3] font-medium">
+                  "{similar.response.query}"
+                </span>
+              </p>
+              <SourcesGrid
+                items={similar.response.items}
+                selectedPermalinks={selected}
+                onToggleSelect={handleToggleSelect}
+                onOpenOnIG={handleOpenOnIG}
+                // Download targets reference_reels.id — TikTok items
+                // aren't cached there, so the button stays disabled.
+                // Find Similar is also omitted (no recursive search).
+              />
+            </>
+          )
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">
@@ -241,12 +350,12 @@ export default function SourcesPage() {
             onToggleSelect={handleToggleSelect}
             onOpenOnIG={handleOpenOnIG}
             onDownload={handleDownload}
+            onFindSimilar={handleFindSimilar}
             downloadStatuses={
               new Map(
                 Array.from(downloads.entries()).map(([k, v]) => [k, v.status]),
               )
             }
-            // Find Similar wiring lands in Task 1.6.
           />
         </>
       )}

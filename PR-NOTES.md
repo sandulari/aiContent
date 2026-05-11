@@ -12,7 +12,8 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 | `6b4bd36` | feat | reference_reels cache + discovery service module (Task 1.3a) |
 | `8d817ab` | feat | discovery endpoints + rate limiter + filter preview wiring (Task 1.3b) |
 | `352d882` | feat | discovery UI page (Task 1.4) |
-| _pending_ | feat | download pipeline (Task 1.5) |
+| `34522ff` | feat | download pipeline (Task 1.5) |
+| _pending_ | feat | off-IG similar content (Task 1.6) + ARCHITECTURE.md |
 
 ## What's in this PR (so far)
 
@@ -203,8 +204,74 @@ Tests:
 
 `requirements-test.txt` now also pins `fakeredis==2.30.0`.
 
+### `feat: off-IG similar content (Task 1.6) + ARCHITECTURE.md`
+
+New `services/api/services/offsite_search.py` calls a RapidAPI TikTok
+search endpoint to surface related content for a given reference reel.
+Picked TikTok over YT Shorts — rationale documented in ARCHITECTURE.md
+(content-type match, provider stability, codebase familiarity).
+
+Endpoint: `GET /api/discovery/items/{reel_id}/similar`. Ownership-scoped
+via reference_pages.user_id; rate-limited per-user (20/hr) and globally
+(500/hr) on the same Redis sliding-window used for refresh.
+
+Query construction: hashtags from the caption (3 max), then word
+fallback, then the reel's ig_code so we always send something.
+`build_query_from_caption` is its own pure function with 6 cases of
+unit tests.
+
+Provider response projection (`_project_tiktok_item`) walks the common
+shape variants — `aweme_id`/`id`/`video_id`, `author.unique_id`/
+`author.username`, root vs nested `statistics`/`stats`, `digg_count`/
+`like_count`, cover-as-string vs cover-as-`{url_list:[]}`. A future
+provider swap stays in env vars + that one function.
+
+Error handling per the spec's "error fallback": upstream failures
+(429/5xx/timeout/malformed) land as `200 {items: [], error: "..."}`
+rather than 502 so the UI renders a graceful explainer card. Strict
+exceptions live in the service layer (`TikTokSearchError` +
+`TikTokErrorKind` enum); the router maps them to the soft response.
+
+Frontend:
+  - `api.discovery.findSimilar(reelId)` + `SimilarResponse` type
+  - `/sources` page renders a separate "Similar elsewhere" view when
+    a Find Similar click resolves (back button restores the main feed)
+  - Reuses `SourcesGrid` + `SourcesCard` so cards look the same across
+    IG and TikTok results — per the spec's component-reuse requirement
+  - `SourcesCard` now derives the top-right handle link based on
+    permalink hostname (TikTok permalinks point to tiktok.com profile;
+    IG to instagram.com — was hardcoded to IG before)
+  - Selection state is shared across modes (a quirk: clicking Select on
+    a TikTok item persists in the main selection set). Noted in
+    FOUND-ISSUES — not a functional break.
+  - Download + Find Similar are intentionally omitted on the similar
+    grid: downloads target reference_reels (TikTok items aren't there),
+    and recursive similar would be confusing.
+
+Tests:
+  - `test_offsite_search.py` — 23 cases: build_query_from_caption (6),
+    _project_tiktok_item shape variants + handle normalization + None
+    returns (6), search_similar_tiktok HTTP including the explicit
+    SOURCE ISOLATION check (request host is tiktok-scraper7, not
+    instagram-anything), 429/non-2xx/timeout/malformed/missing-list/
+    missing-key, drops-unparseable-keeps-rest (11).
+  - `test_discovery_items_router.py` — 6 new cases: similar happy path
+    (with hashtag query assertion), error-fallback returns 200+error
+    flag, 404 missing, 404 not-owner, 429 rate-limited, 401 unauth.
+  - `sourcesPage.test.tsx` — 2 new cases: Find Similar click opens
+    similar view + back returns to feed; error response renders the
+    explainer card.
+
+New top-level `ARCHITECTURE.md` documents:
+  - End-to-end student flow
+  - New tables + endpoints (one place to look)
+  - The three RapidAPI sources used + their env overrides
+  - Why TikTok over YT Shorts
+  - BackgroundTasks vs Celery decision (and the migration trigger)
+  - Rate-limit caps
+  - DiscoveryItem shape contract
+
 ## Still pending (in this branch)
-- 1.6 Off-IG similar content
 - 1.7 Editor handoff + scheduler (largely already built)
 - Phase 2 hardening (CSRF, idempotency, XSS, refresh-token reuse-detection,
   CORS allowlist, CSP)

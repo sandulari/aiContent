@@ -37,6 +37,11 @@ from models.reference_page import ReferencePage
 from models.reference_reel import ReferenceReel
 from models.user import User
 from services.discovery_download import perform_download
+from services.offsite_search import (
+    TikTokSearchError,
+    build_query_from_caption,
+    search_similar_tiktok,
+)
 from services.rate_limiter import RateLimitExceeded, check_and_bump
 from services.reference_discovery import (
     DiscoveryItem,
@@ -411,3 +416,115 @@ async def _perform_download_background(download_id: UUID) -> None:
         except Exception:  # noqa: BLE001
             logger.exception("download %s wrapper failed", download_id)
             await db.rollback()
+
+
+# ---------------------------------------------------------------------------
+# GET /api/discovery/items/{reel_id}/similar  (Task 1.6)
+# ---------------------------------------------------------------------------
+
+# Per-user budget for "Find similar" calls. Each call burns one RapidAPI
+# TikTok search request — generous enough for casual browsing, tight
+# enough to keep a runaway client from exhausting quota.
+_SIMILAR_PER_USER = 20
+_SIMILAR_GLOBAL = 500
+_SIMILAR_WINDOW_SECONDS = 3600
+
+_SIMILAR_LIMIT = 12
+
+
+@router.get("/items/{reel_id}/similar")
+async def find_similar(
+    reel_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Find off-IG similar content for a discovery reel.
+
+    Ownership: the reel must belong to the caller (via reference_pages.user_id).
+    Source: TikTok via RapidAPI (see ARCHITECTURE.md for the why-this-not-YT).
+    Query: hashtags from the reel's caption (3 max), then keyword fallback,
+    then the reel's ig_code so we always send something.
+
+    Returns ``{items: [DiscoveryItem], source: {handle, permalink}, query,
+    error: null | string}``. Upstream RapidAPI failures land as
+    ``items=[], error="..."``  rather than a 502 so the UI can render a
+    graceful empty-with-explanation state per the spec's
+    "error fallback" requirement.
+    """
+    try:
+        await check_and_bump(
+            f"similar:rl:user:{current_user.id}",
+            max_per_window=_SIMILAR_PER_USER,
+            window_seconds=_SIMILAR_WINDOW_SECONDS,
+        )
+        await check_and_bump(
+            "similar:rl:global",
+            max_per_window=_SIMILAR_GLOBAL,
+            window_seconds=_SIMILAR_WINDOW_SECONDS,
+        )
+    except RateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": "rate_limit",
+                "detail": "Too many similar-content lookups. Try again later.",
+                "retry_after": exc.retry_after,
+            },
+        )
+
+    reel = (
+        await db.execute(
+            select(ReferenceReel, ReferencePage.ig_handle)
+            .join(ReferencePage, ReferenceReel.reference_page_id == ReferencePage.id)
+            .where(
+                ReferenceReel.id == reel_id,
+                ReferencePage.user_id == current_user.id,
+            )
+        )
+    ).first()
+    if not reel:
+        raise HTTPException(status_code=404, detail="Reel not found")
+    reel_row, ig_handle = reel
+
+    query = build_query_from_caption(reel_row.caption, fallback=reel_row.ig_code or "")
+    if not query:
+        return {
+            "items": [],
+            "source": {
+                "handle": ig_handle,
+                "permalink": reel_row.permalink,
+            },
+            "query": "",
+            "error": "no_query",
+        }
+
+    try:
+        raw_items = await search_similar_tiktok(query, max_results=_SIMILAR_LIMIT)
+    except TikTokSearchError as exc:
+        logger.warning(
+            "Find similar failed: kind=%s status=%s detail=%s",
+            exc.kind.value, exc.status_code, exc,
+        )
+        return {
+            "items": [],
+            "source": {
+                "handle": ig_handle,
+                "permalink": reel_row.permalink,
+            },
+            "query": query,
+            "error": exc.kind.value,
+        }
+
+    items = [
+        to_discovery_item(it["source_handle"], it).to_dict()
+        for it in raw_items
+    ]
+    return {
+        "items": items,
+        "source": {
+            "handle": ig_handle,
+            "permalink": reel_row.permalink,
+        },
+        "query": query,
+        "error": None,
+    }

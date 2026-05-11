@@ -344,6 +344,13 @@ export interface Download {
   updated_at: string;
 }
 
+export interface SimilarResponse {
+  items: DiscoveryItem[];
+  source: { handle: string; permalink: string };
+  query: string;
+  error: string | null;
+}
+
 export interface DiscoveryItemsResponse {
   items: DiscoveryItem[];
   total: number;
@@ -676,6 +683,9 @@ export const api = {
     },
     downloadStatus(downloadId: string) {
       return req<Download>(`/api/discovery/downloads/${downloadId}`);
+    },
+    findSimilar(reelId: string) {
+      return req<SimilarResponse>(`/api/discovery/items/${reelId}/similar`);
     },
   },
 };
