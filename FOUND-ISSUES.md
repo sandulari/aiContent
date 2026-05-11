@@ -82,7 +82,34 @@ FastAPI's `CORSMiddleware` works around it by echoing the request origin,
 which is functionally an open allowlist. Phase 2.5 will replace with a
 strict `ALLOWED_ORIGINS` env-driven list.
 
-## 6. `apps/web/lib/api.ts` token refresh treats _every_ 401 as a refresh trigger
+## 6. Discovery refresh runs in-process via BackgroundTasks instead of Celery
+
+`POST /api/discovery/refresh` queues work through FastAPI's
+`BackgroundTasks` (Task 1.3b). The refresh runs in the same uvicorn worker
+that handled the request, blocking that worker for the duration of the
+RapidAPI fetch (~5-30 s for a user with several reference pages).
+
+This is a deliberate trade-off for Task 1.3 — pulling in Celery added
+significant complexity (worker-side duplication of the service module
+since `services/api` and `services/worker` are separate Python packages
+with no shared lib, plus prod-compose / render.yaml queue wiring). The
+in-process path is correct for early scale.
+
+**When to migrate**: when one of
+- a refresh routinely takes >5 s (uvicorn worker starvation visible in
+  p50 latency), or
+- we want a periodic Celery beat that refreshes every user's cache on
+  a schedule (then `BackgroundTasks` is the wrong tool by definition).
+
+The refactor is bounded: `services/worker/lib/reference_discovery_sync.py`
+mirrors `fetch_handle_reels` with sync httpx + sync SQLAlchemy session.
+`services/worker/tasks/reference_discovery.py` wraps it in `@app.task`.
+`celery_app.py` adds `tasks.reference_discovery.*` -> `queue.discovery_v2`
+(NOT `queue.discover` — that's the legacy niche pipeline). Then prod
+compose's `worker-enhancer` needs `queue.discovery_v2` appended to its
+`-Q` flag (issue #1 above is the same shape — easy to miss).
+
+## 7. `apps/web/lib/api.ts` token refresh treats _every_ 401 as a refresh trigger
 
 The retry-on-401 logic doesn't distinguish between "your access token
 expired" and "you tried to access something you don't own". A 401 from

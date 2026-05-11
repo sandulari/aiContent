@@ -31,7 +31,13 @@ from models.discovery_filter import (
     MAX_AGE_DAYS_CEILING,
     DiscoveryFilter,
 )
+from models.reference_page import ReferencePage
+from models.reference_reel import ReferenceReel
 from models.user import User
+from services.reference_discovery import (
+    apply_filter,
+    to_discovery_item,
+)
 
 router = APIRouter(prefix="/api/discovery-filter", tags=["discovery-filter"])
 
@@ -144,14 +150,31 @@ async def preview_filter(
 ):
     """Return the count of reels that would match ``body`` for the caller.
 
-    No persistence — accepts a hypothetical filter for the editor's live
-    preview. Returns ``has_cache=False`` until Task 1.3's ``reference_reels``
-    cache table exists; the UI reads that flag to render an explainer
-    instead of a misleading zero. The validation lives in
-    ``DiscoveryFilterPayload`` so an invalid preview body 422s identically
-    to an invalid PUT.
+    Counts against the current ``reference_reels`` cache (Task 1.3a). If
+    the user has no cached reels yet (zero reference pages, or none
+    refreshed), returns ``has_cache=False`` so the UI can render an
+    explainer instead of a misleading zero. The body is still validated
+    by ``DiscoveryFilterPayload`` end-to-end so an invalid preview body
+    422s identically to an invalid PUT.
     """
-    # Placeholder until Task 1.3 populates `reference_reels`. The filter
-    # body is still validated end-to-end so the editor's debounced
-    # /preview calls give the same 422 feedback as the eventual Save.
-    return {"count": 0, "has_cache": False}
+    rows = (
+        await db.execute(
+            select(ReferenceReel, ReferencePage.ig_handle)
+            .join(ReferencePage, ReferenceReel.reference_page_id == ReferencePage.id)
+            .where(ReferencePage.user_id == current_user.id)
+        )
+    ).all()
+
+    if not rows:
+        return {"count": 0, "has_cache": False}
+
+    items = [to_discovery_item(handle, reel) for reel, handle in rows]
+    matched = apply_filter(
+        items,
+        min_views=body.min_views,
+        min_likes=body.min_likes,
+        min_comments=body.min_comments,
+        min_engagement_rate=body.min_engagement_rate,
+        max_age_days=body.max_age_days,
+    )
+    return {"count": len(matched), "has_cache": True}

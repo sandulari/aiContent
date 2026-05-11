@@ -316,6 +316,40 @@ export interface DiscoveryFilterPreview {
   has_cache: boolean;
 }
 
+export interface DiscoveryItem {
+  source_handle: string;
+  permalink: string;
+  media_url: string | null;
+  thumbnail: string | null;
+  caption: string | null;
+  views: number;
+  likes: number;
+  comments: number;
+  posted_at: string | null;     // ISO 8601
+  duration_seconds: number | null;
+  score: number;
+}
+
+export interface DiscoveryItemsResponse {
+  items: DiscoveryItem[];
+  total: number;
+  filter: {
+    min_views: number;
+    min_likes: number;
+    min_comments: number;
+    min_engagement_rate: number;
+    max_age_days: number;
+    sort_by: DiscoverySortBy;
+  };
+  has_cache: boolean;
+}
+
+export interface DiscoveryRefreshResponse {
+  queued: boolean;
+  page_count: number;
+  detail?: string;
+}
+
 // ── Fetch ────────────────────────────────────────────────────────────────
 
 interface FetchOpts extends RequestInit {
@@ -613,6 +647,15 @@ export const api = {
         method: "POST",
         body: JSON.stringify(payload),
       });
+    },
+  },
+
+  discovery: {
+    items(params?: { limit?: number; offset?: number }) {
+      return req<DiscoveryItemsResponse>("/api/discovery/items", { params: params as any });
+    },
+    refresh() {
+      return req<DiscoveryRefreshResponse>("/api/discovery/refresh", { method: "POST" });
     },
   },
 };

@@ -8,7 +8,9 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 |---|---|---|
 | `1d5a8de` | chore | bootstrap test infrastructure (pytest + vitest) |
 | `8d7cd43` | feat | reference pages model + UI (Task 1.1) |
-| _pending_ | feat | discovery filter config (Task 1.2) |
+| `5f66f96` | feat | discovery filter config (Task 1.2) |
+| `6b4bd36` | feat | reference_reels cache + discovery service module (Task 1.3a) |
+| _pending_ | feat | discovery endpoints + rate limiter + filter preview wiring (Task 1.3b) |
 
 ## What's in this PR (so far)
 
@@ -141,9 +143,65 @@ Tests:
   Save disabled when not dirty + enabled after change + sends payload,
   /preview re-fires after a field edit
 
-## Still pending (in this branch)
+### `feat: reference_reels cache + discovery service module (Task 1.3a)`
 
-- 1.3 RapidAPI discovery service
+Foundation commit — no new endpoints or worker tasks, site keeps running.
+
+- New `reference_reels` table caches RapidAPI reel projections per
+  reference page. `UNIQUE(reference_page_id, ig_media_id)` makes future
+  refresh an idempotent upsert. Indexes cover the three hot reads:
+  `(page, posted_at DESC)`, `(view_count DESC)`, `(fetched_at)`.
+- `services/api/services/reference_discovery.py`: pure logic + RapidAPI
+  client wrapper. `DiscoveryItem` shape matches Phase 1.3 spec exactly.
+  `RapidAPIError` carries a `RapidAPIErrorKind` enum so callers branch on
+  `.kind` instead of grepping strings. Kept separate from the legacy
+  `services/instagram_api.py` (which swallows errors to keep the niche
+  scraper running) so the new flow can surface failures.
+- 27 test cases: 16 pure-logic (engagement math, score per sort key, filter
+  thresholds including in-seconds max_age, rank determinism + tiebreaker,
+  mapper for dict / ORM-like / missing optionals) + 11 HTTP via
+  `httpx.MockTransport` (status mapping for 404/429/5xx/418, timeout,
+  malformed body, missing user_id, paging stop conditions, missing key).
+
+### `feat: discovery endpoints + rate limiter + filter preview wiring (Task 1.3b)`
+
+Wires the foundation into the API surface:
+
+- **`GET /api/discovery/items`** — paginated, applies the caller's saved
+  filter (or defaults), ranks via `rank_items`, returns `has_cache: false`
+  on an empty cache so the UI shows the "Run discovery to populate" copy
+  instead of a misleading zero.
+- **`POST /api/discovery/refresh`** — kicks a RapidAPI fetch off via
+  `FastAPI BackgroundTasks` (same uvicorn worker, no Celery for now —
+  see FOUND-ISSUES #7 for the Celery follow-up). Per-user cap of 5
+  refreshes / hour and global cap of 200 / hour share a Redis sliding-
+  window via `services/rate_limiter.py`. Returns 429 with
+  `{code: "rate_limit", retry_after}` when the cap is hit.
+- **`POST /api/discovery-filter/preview`** updated to count the matching
+  rows in `reference_reels` for the caller. `has_cache` is now meaningful.
+- **Background refresh split** into `do_refresh(pages, db)` (pure, uses
+  caller's session, no commit) + `refresh_pages_background(pages)` (opens
+  fresh session, commits). Tests drive the inner directly on the savepoint-
+  mode test session so writes roll back at teardown.
+
+Frontend API client (`apps/web/lib/api.ts`) gains `api.discovery.items()` +
+`api.discovery.refresh()` plus the matching types. No UI yet — the
+discovery grid is Task 1.4.
+
+Tests:
+- `tests/test_rate_limiter.py` — 6 cases with `fakeredis`: first call
+  returns 1 + sets TTL, increments to cap, raises above cap, TTL not
+  reset on subsequent increments (sustained load doesn't extend the
+  window), keys are independent, retry_after reflects current TTL.
+- `tests/test_discovery_items_router.py` — 12 cases: items empty
+  cache, only-this-users-reels, applies-saved-filter, ranks-by-sort_by,
+  pagination, refresh-no-pages, refresh-queues, refresh-per-user-429,
+  do_refresh inserts / is upsert / continues on one-handle failure,
+  filter preview counts cached items + empty cache stays has_cache=false.
+
+`requirements-test.txt` now also pins `fakeredis==2.30.0`.
+
+## Still pending (in this branch)
 - 1.4 Discovery UI
 - 1.5 Download pipeline (existing code present — needs idempotency wiring)
 - 1.6 Off-IG similar content
