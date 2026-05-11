@@ -13,7 +13,8 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 | `8d817ab` | feat | discovery endpoints + rate limiter + filter preview wiring (Task 1.3b) |
 | `352d882` | feat | discovery UI page (Task 1.4) |
 | `34522ff` | feat | download pipeline (Task 1.5) |
-| _pending_ | feat | off-IG similar content (Task 1.6) + ARCHITECTURE.md |
+| `d445d36` | feat | off-IG similar content (Task 1.6) + ARCHITECTURE.md |
+| `67dcfb8` | feat | editor handoff + scheduler tests (Task 1.7) |
 
 ## What's in this PR (so far)
 
