@@ -20,6 +20,7 @@ from models.reel_profile import ReelProfile
 from models.scheduled_reel import ScheduledReel
 from models.reference_page import ReferencePage
 from models.discovery_filter import DiscoveryFilter
+from models.reference_reel import ReferenceReel
 
 __all__ = [
     "Base", "UUIDMixin",
@@ -33,4 +34,5 @@ __all__ = [
     "ScheduledReel",
     "ReferencePage",
     "DiscoveryFilter",
+    "ReferenceReel",
 ]

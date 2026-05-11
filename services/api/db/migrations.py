@@ -395,6 +395,41 @@ MIGRATION_STATEMENTS: list[str] = [
         updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
+    # reference_reels: per-reference-page reel cache feeding the new
+    # discovery feed. UNIQUE(reference_page_id, ig_media_id) makes the
+    # periodic refresh an idempotent upsert. Indexes cover the three hot
+    # query shapes: rank-by-recency (page + posted_at DESC), rank-by-views
+    # (view_count DESC), and "rows older than 1h" sweeps (fetched_at).
+    """
+    CREATE TABLE IF NOT EXISTS reference_reels (
+        id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        reference_page_id UUID NOT NULL REFERENCES reference_pages(id) ON DELETE CASCADE,
+        ig_media_id       VARCHAR(50) NOT NULL,
+        ig_code           VARCHAR(50) NOT NULL,
+        permalink         TEXT NOT NULL,
+        thumbnail_url     TEXT,
+        caption           TEXT,
+        view_count        BIGINT NOT NULL DEFAULT 0,
+        like_count        BIGINT NOT NULL DEFAULT 0,
+        comment_count     BIGINT NOT NULL DEFAULT 0,
+        duration_seconds  DOUBLE PRECISION,
+        posted_at         TIMESTAMPTZ,
+        fetched_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_reference_reels_page_media UNIQUE (reference_page_id, ig_media_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_reference_reels_page_posted
+    ON reference_reels(reference_page_id, posted_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_reference_reels_views
+    ON reference_reels(view_count DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_reference_reels_fetched
+    ON reference_reels(fetched_at)
+    """,
 ]
 
 
