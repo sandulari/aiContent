@@ -64,7 +64,8 @@ def export_video_task(self, export_id: str):
                 text(
                     """
                     SELECT
-                        ue.id, ue.viral_reel_id, ue.user_id, ue.template_id,
+                        ue.id, ue.viral_reel_id, ue.reference_reel_id,
+                        ue.user_id, ue.template_id,
                         ue.headline_text, ue.subtitle_text, ue.caption_text,
                         ue.headline_style, ue.subtitle_style,
                         ue.video_transform, ue.video_trim, ue.audio_config,
@@ -80,7 +81,20 @@ def export_video_task(self, export_id: str):
         if not export_row:
             raise ValueError(f"Export {export_id} not found")
 
-        reel_id = str(export_row.viral_reel_id)
+        # Source polymorphism (Task 1.7 / FOUND-ISSUES #7):
+        # user_exports rows can be sourced from EITHER viral_reel_id
+        # (the legacy niche-discovery pipeline) OR reference_reel_id
+        # (the new per-reference-page discovery + downloads pipeline).
+        # The CHECK constraint ck_user_exports_source enforces exactly
+        # one is populated. Branch the lookup so a download-sourced
+        # export resolves to its `downloads.minio_key` instead of the
+        # legacy video_files table.
+        reel_id = str(export_row.viral_reel_id) if export_row.viral_reel_id else None
+        ref_reel_id = (
+            str(export_row.reference_reel_id)
+            if getattr(export_row, "reference_reel_id", None)
+            else None
+        )
 
         with get_session() as session:
             session.execute(
@@ -89,27 +103,58 @@ def export_video_task(self, export_id: str):
             )
 
         with get_session() as session:
-            video_file = session.execute(
-                text(
-                    """
-                    SELECT id, minio_bucket, minio_key, file_type, resolution, duration_seconds
-                    FROM video_files
-                    WHERE viral_reel_id = :reel_id
-                    ORDER BY
-                        CASE file_type
-                            WHEN 'enhanced' THEN 1
-                            WHEN 'raw_download' THEN 2
-                            ELSE 3
-                        END,
-                        created_at DESC
-                    LIMIT 1
-                    """
-                ),
-                {"reel_id": reel_id},
-            ).fetchone()
+            if reel_id is not None:
+                video_file = session.execute(
+                    text(
+                        """
+                        SELECT id, minio_bucket, minio_key, file_type, resolution, duration_seconds
+                        FROM video_files
+                        WHERE viral_reel_id = :reel_id
+                        ORDER BY
+                            CASE file_type
+                                WHEN 'enhanced' THEN 1
+                                WHEN 'raw_download' THEN 2
+                                ELSE 3
+                            END,
+                            created_at DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {"reel_id": reel_id},
+                ).fetchone()
+            else:
+                # Reference-reel-sourced export: read directly from the
+                # downloads row the student already triggered. The bucket
+                # is fixed at "videos" by services/api/services/discovery_download.py.
+                video_file = session.execute(
+                    text(
+                        """
+                        SELECT
+                            d.id,
+                            'videos'::TEXT     AS minio_bucket,
+                            d.minio_key        AS minio_key,
+                            'raw_download'::TEXT AS file_type,
+                            ''::TEXT           AS resolution,
+                            rr.duration_seconds AS duration_seconds
+                        FROM downloads d
+                        JOIN reference_reels rr ON rr.id = d.reference_reel_id
+                        WHERE d.reference_reel_id = :ref_reel_id
+                          AND d.user_id = :user_id
+                          AND d.status = 'done'
+                        LIMIT 1
+                        """
+                    ),
+                    {
+                        "ref_reel_id": ref_reel_id,
+                        "user_id": str(export_row.user_id),
+                    },
+                ).fetchone()
 
         if not video_file:
-            raise ValueError(f"No video file found for viral_reel={reel_id}")
+            raise ValueError(
+                f"No video file found for export={export_id} "
+                f"(viral_reel={reel_id}, reference_reel={ref_reel_id})"
+            )
 
         local_dir = os.path.join(WORK_DIR, f"export_{export_id}")
         os.makedirs(local_dir, exist_ok=True)
@@ -221,31 +266,38 @@ def export_video_task(self, export_id: str):
 
         export_file_id = str(uuid.uuid4())
         with get_session() as session:
-            session.execute(
-                text(
-                    """
-                    INSERT INTO video_files (
-                        id, viral_reel_id, user_id, file_type,
-                        minio_bucket, minio_key, file_size_bytes,
-                        resolution, duration_seconds, created_at
-                    ) VALUES (
-                        :id, :reel_id, :user_id, 'user_edited',
-                        :minio_bucket, :minio_key, :file_size_bytes,
-                        '1080x1920', :duration_seconds, :created_at
-                    )
-                    """
-                ),
-                {
-                    "id": export_file_id,
-                    "reel_id": reel_id,
-                    "user_id": str(export_row.user_id),
-                    "minio_bucket": EXPORTS_BUCKET,
-                    "minio_key": export_key,
-                    "file_size_bytes": output_size,
-                    "duration_seconds": float(video_file.duration_seconds or 0),
-                    "created_at": datetime.now(timezone.utc),
-                },
-            )
+            # Legacy `video_files` table is keyed by viral_reel_id NOT NULL,
+            # so reference-reel-sourced exports skip this INSERT — the
+            # row would violate the FK schema. The export download path
+            # reads from user_exports.export_minio_key directly (see
+            # routers/exports.py download_export), so skipping doesn't
+            # break the user-visible flow.
+            if reel_id is not None:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO video_files (
+                            id, viral_reel_id, user_id, file_type,
+                            minio_bucket, minio_key, file_size_bytes,
+                            resolution, duration_seconds, created_at
+                        ) VALUES (
+                            :id, :reel_id, :user_id, 'user_edited',
+                            :minio_bucket, :minio_key, :file_size_bytes,
+                            '1080x1920', :duration_seconds, :created_at
+                        )
+                        """
+                    ),
+                    {
+                        "id": export_file_id,
+                        "reel_id": reel_id,
+                        "user_id": str(export_row.user_id),
+                        "minio_bucket": EXPORTS_BUCKET,
+                        "minio_key": export_key,
+                        "file_size_bytes": output_size,
+                        "duration_seconds": float(video_file.duration_seconds or 0),
+                        "created_at": datetime.now(timezone.utc),
+                    },
+                )
 
             session.execute(
                 text(
@@ -286,6 +338,7 @@ def export_video_task(self, export_id: str):
         return {
             "export_id": export_id,
             "viral_reel_id": reel_id,
+            "reference_reel_id": ref_reel_id,
             "minio_key": export_key,
             "file_size": output_size,
             "resolution": "1080x1920",

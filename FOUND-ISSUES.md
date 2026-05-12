@@ -6,21 +6,10 @@ a one-paragraph PR description could be written from it directly.
 
 ## 1. `worker-enhancer` Celery queue mismatch — `queue.publish` not consumed in prod compose
 
-**Severity**: high — scheduled IG reels will silently never publish on the
-DigitalOcean droplet that uses `infra/docker-compose.prod.yml`.
-
-- `services/worker/celery_app.py:33` routes `tasks.publish_scheduled_reel.*`
-  to `queue.publish`.
-- `services/worker/celery_app.py:66–77` schedules `tick-scheduled-reels`
-  (every minute) and `cleanup-stuck-publishes` (every 15 minutes) on
-  `queue.publish`.
-- `infra/docker-compose.prod.yml` `worker-enhancer.command` ends with
-  `-Q queue.enhance,queue.export` — **`queue.publish` is missing**.
-- `render.yaml` is correct (`-Q queue.enhance,queue.export,queue.publish`).
-
-**Fix**: add `,queue.publish` to the `worker-enhancer` command in
-`infra/docker-compose.prod.yml`. On the deployed droplet, also restart
-`worker-enhancer` so the new queue subscription takes effect.
+**RESOLVED in Round 6** — added `,queue.publish` to the
+`worker-enhancer` command in `infra/docker-compose.prod.yml`. Now the
+docker-compose prod stack matches `render.yaml`. Restart on droplet
+picked up the new queue subscription.
 
 ## 2. Two "reference pages" surfaces in /settings will confuse users
 
@@ -91,34 +80,16 @@ compose's `worker-enhancer` needs `queue.discovery_v2` appended to its
 
 ## 7. Worker exporter doesn't dispatch on `user_exports.reference_reel_id`
 
-Task 1.7 makes `user_exports.viral_reel_id` nullable and adds a
-`reference_reel_id` column so a download-sourced UserExport can drive
-the existing `/editor/{id}` route. The CHECK constraint ensures exactly
-one source FK is populated.
-
-The router-level changes are done. The worker exporter
-(`services/worker/tasks/exporter.py`) still reads the source video by
-following `user_exports.viral_reel_id -> viral_reels -> video_files`.
-For a discovery-download UserExport that join is empty, so a Render
-click on a download-sourced export will fail to produce an MP4 until
-the exporter learns to branch:
-
-```
-if user_exports.reference_reel_id IS NOT NULL:
-    source_minio_key = (
-        SELECT minio_key FROM downloads
-        WHERE reference_reel_id = user_exports.reference_reel_id
-          AND user_id = user_exports.user_id
-          AND status = 'done'
-    )
-else:
-    source_minio_key = (... existing viral_reels -> video_files lookup ...)
-```
-
-The download row already lives at `discovery/{user_id}/{download_id}.mp4`
-in the `videos` MinIO bucket, so the fetch is a single SELECT. Editing
-the source video in the editor UI (preview, trim, overlay) is unaffected
-— it only breaks at render-export time.
+**RESOLVED in Round 6** — `services/worker/tasks/exporter.py` now
+branches: if `viral_reel_id` is set, it follows the legacy
+`viral_reels -> video_files` join; if `reference_reel_id` is set, it
+reads `downloads.minio_key` directly (filtered by user_id +
+status='done') and pulls `duration_seconds` from `reference_reels`.
+The `video_files` INSERT after a successful render is also skipped
+for reference-reel exports because `video_files.viral_reel_id` is
+NOT NULL — the export download path (`routers/exports.py
+download_export`) reads from `user_exports.export_minio_key` directly
+so skipping the video_files row doesn't break any user-visible flow.
 
 ## 8. `apps/web/lib/api.ts` token refresh treats _every_ 401 as a refresh trigger
 

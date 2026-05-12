@@ -157,7 +157,13 @@ services:
 
   worker-enhancer:
     <<: *worker-common
-    command: celery -A celery_app worker -Q queue.enhance,queue.export -c 2 -E --loglevel=info
+    # FOUND-ISSUES #1 (resolved): queue.publish must be in -Q here.
+    # `tasks.publish_scheduled_reel.*` routes to queue.publish (see
+    # services/worker/celery_app.py:33), and Celery Beat schedules
+    # `tick-scheduled-reels` (every minute) + `cleanup-stuck-publishes`
+    # (every 15 min) onto the same queue. Without a worker consuming
+    # it, every user-scheduled IG publish silently fails.
+    command: celery -A celery_app worker -Q queue.enhance,queue.export,queue.publish -c 2 -E --loglevel=info
     healthcheck:
       test: ["CMD-SHELL", "celery -A celery_app inspect ping -d celery@$$HOSTNAME"]
       interval: 30s
