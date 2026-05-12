@@ -149,3 +149,26 @@ the CSP header for that request. Implementation:
 Defer until we have a stable inline-script audit — moving to nonces
 breaks any third-party script that doesn't carry the nonce, so we'd
 need to confirm we don't load Stripe / GA / etc. inline first.
+
+## 10. `MissingGreenlet` under same-key Idempotency contention
+
+Round-5 stress (10 concurrent POSTs to ``/api/reference-pages`` with
+the *same* Idempotency-Key + same body) produced 2× 500 with
+``sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been
+called``. Stack lands in asyncpg's ``_handle_exception`` during the
+IntegrityError unwind: multiple coroutines race the UNIQUE
+constraint, hit IntegrityError, do ``await db.rollback()``, then the
+explicit re-SELECT for the existing row — under load the connection
+ends up in a state where SQLAlchemy can't reach a greenlet context.
+
+Realistic-user impact: zero. Nobody fires 10 simultaneous same-key
+POSTs from a browser. The frontend's only retry path (401-refresh)
+is sequential. The app-layer dedupe (SELECT existing before INSERT)
+handles the common race. Under 10 concurrent UNIQUE-key requests (no
+contention), all succeed cleanly.
+
+Fix when it matters: move CSRF + Idempotency off ``BaseHTTPMiddleware``
+to pure ASGI middleware so request-body draining doesn't sit inside
+a TaskGroup that confuses the asyncpg greenlet context. Or accept
+the race and add a per-(user, handle) advisory lock around
+``add_reference_page``.
