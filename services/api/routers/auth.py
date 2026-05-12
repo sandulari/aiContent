@@ -15,12 +15,10 @@ from db.session import get_db
 from middleware.auth import (
     clear_auth_cookies,
     create_access_token,
-    create_refresh_token,
     create_reset_token,
     get_current_user,
     hash_password,
     hash_reset_token,
-    hash_token,
     set_auth_cookies,
     verify_password,
 )
@@ -28,6 +26,12 @@ from models.user import User
 from schemas.user import UserCreate, UserLogin, UserResponse
 from services.email_service import send_email
 from services.email_templates import password_reset_email, welcome_email
+from services.refresh_tokens import (
+    RotationResult,
+    issue_new_family,
+    revoke_token,
+    rotate_refresh_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -100,17 +104,25 @@ def _user_dict(user: User) -> dict:
     }
 
 
-async def _issue_tokens(user: User, db: AsyncSession, response: Response) -> dict:
-    """Generate access + refresh tokens, persist refresh hash, set cookies."""
+async def _issue_login_session(
+    user: User, db: AsyncSession, response: Response
+) -> dict:
+    """Mint access + refresh tokens for a brand-new session (login / register).
+
+    Starts a fresh refresh-token family so subsequent ``/refresh`` calls
+    rotate within it and a leaked-and-replayed token gets caught as a
+    REUSE (Task 2.4).
+    """
     access = create_access_token(user.id, role=user.role)
-    raw_refresh, hashed_refresh, refresh_expires = create_refresh_token()
-
-    user.refresh_token = hashed_refresh
-    user.refresh_token_expires = refresh_expires
-    await db.flush()
-
+    raw_refresh, _expires_at, _family_id = await issue_new_family(db, user.id)
     set_auth_cookies(response, access, raw_refresh)
     return {"user": _user_dict(user)}
+
+
+def _set_rotated_cookies(response: Response, user: User, raw_refresh: str) -> None:
+    """Issue cookies for the post-rotation access + refresh pair."""
+    access = create_access_token(user.id, role=user.role)
+    set_auth_cookies(response, access, raw_refresh)
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +162,7 @@ async def register(
             detail="Email already registered",
         )
 
-    payload = await _issue_tokens(user, db, response)
+    payload = await _issue_login_session(user, db, response)
 
     # Seed the AiModernTimes default template so the editor is never empty.
     # Non-blocking: registration succeeds even if Celery is unreachable.
@@ -185,55 +197,91 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
-    return await _issue_tokens(user, db, response)
+    return await _issue_login_session(user, db, response)
 
 
 @router.post("/refresh")
 async def refresh(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
-    """Exchange a valid refresh token cookie for new access + refresh tokens."""
+    """Exchange a valid refresh-token cookie for new access + refresh tokens.
+
+    Rotation + reuse detection (Task 2.4):
+
+    - **rotated** -> new pair issued, old hash revoked in the family.
+    - **reuse**   -> entire family deleted, cookies cleared, 401 with
+                     ``code: refresh_token_reuse`` so the frontend can
+                     surface "log in again — your session may have
+                     been compromised".
+    - **unknown** -> 401 with ``code: invalid_refresh_token``.
+    - **expired** -> 401 with ``code: refresh_token_expired``.
+    """
     raw_refresh = request.cookies.get("refresh_token")
     if not raw_refresh:
         raise HTTPException(status_code=401, detail="No refresh token")
 
-    hashed = hash_token(raw_refresh)
-    result = await db.execute(select(User).where(User.refresh_token == hashed))
-    user = result.scalar_one_or_none()
+    outcome = await rotate_refresh_token(db, raw_refresh)
 
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
-
-    if user.refresh_token_expires and user.refresh_token_expires < datetime.now(timezone.utc):
-        # Expired — clear everything
-        user.refresh_token = None
-        user.refresh_token_expires = None
-        await db.flush()
+    if outcome.result == RotationResult.REUSE:
         clear_auth_cookies(response)
-        raise HTTPException(status_code=401, detail="Refresh token expired")
+        logger.warning(
+            "refresh-token reuse detected for family=%s user=%s — family purged",
+            outcome.family_id,
+            outcome.user_id,
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "detail": "Refresh-token reuse detected — please log in again.",
+                "code": "refresh_token_reuse",
+            },
+        )
 
-    # Rotate: issue new pair
-    return await _issue_tokens(user, db, response)
+    if outcome.result == RotationResult.EXPIRED:
+        clear_auth_cookies(response)
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "detail": "Refresh token expired",
+                "code": "refresh_token_expired",
+            },
+        )
+
+    if outcome.result == RotationResult.UNKNOWN:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "detail": "Invalid refresh token",
+                "code": "invalid_refresh_token",
+            },
+        )
+
+    # ROTATED — load the user and issue cookies for the successor pair.
+    result = await db.execute(select(User).where(User.id == outcome.user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        # Should be unreachable: the row's user_id FK has ON DELETE CASCADE.
+        clear_auth_cookies(response)
+        raise HTTPException(status_code=401, detail="User not found")
+
+    assert outcome.new_raw_token is not None  # ROTATED implies non-null
+    _set_rotated_cookies(response, user, outcome.new_raw_token)
+    return {"user": _user_dict(user)}
 
 
 @router.post("/logout")
 async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
-    """Clear auth cookies and invalidate the refresh token in DB."""
-    # Try to find user from access token to clear their refresh token
-    token = request.cookies.get("access_token")
-    if token:
+    """Clear auth cookies and revoke the current refresh token.
+
+    Revokes the SPECIFIC token presented, not the whole family — other
+    concurrent sessions in the same family (if any) keep working. The
+    cookie clear is always done, even if the revoke is a no-op
+    (already-logged-out client, missing cookies).
+    """
+    raw_refresh = request.cookies.get("refresh_token")
+    if raw_refresh:
         try:
-            from middleware.auth import verify_access_token
-            payload = verify_access_token(token)
-            user_id = payload.get("sub")
-            if user_id:
-                from uuid import UUID
-                result = await db.execute(select(User).where(User.id == UUID(user_id)))
-                user = result.scalar_one_or_none()
-                if user:
-                    user.refresh_token = None
-                    user.refresh_token_expires = None
-                    await db.flush()
+            await revoke_token(db, raw_refresh)
         except Exception:
-            pass  # Best-effort — always clear cookies regardless
+            logger.warning("revoke_token failed during /logout — continuing", exc_info=True)
 
     clear_auth_cookies(response)
     return {"message": "Logged out"}

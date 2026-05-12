@@ -8,6 +8,8 @@ import { Card } from "@/components/ui/card";
 import { Loading } from "@/components/shared/loading";
 import { SkeletonSettings } from "@/components/shared/skeleton";
 import { api, UserPage, PageType } from "@/lib/api";
+import { ReferencePagesPanel } from "@/components/settings/referencePagesPanel";
+import { DiscoveryFilterPanel } from "@/components/settings/discoveryFilterPanel";
 
 export default function SettingsPage() {
   const [pages, setPages] = useState<UserPage[]>([]);
@@ -197,6 +199,12 @@ export default function SettingsPage() {
           )}
         </Card>
       </div>
+
+      {/* Reference pages for the per-page discovery pipeline (Task 1.1). */}
+      <ReferencePagesPanel />
+
+      {/* Discovery filter config (Task 1.2). */}
+      <DiscoveryFilterPanel />
 
       {/* ManyChat Integration */}
       <div>

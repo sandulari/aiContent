@@ -1,4 +1,14 @@
-"""Professional HTML email templates for Shadow Pages."""
+"""Professional HTML email templates for Shadow Pages.
+
+Every interpolated value MUST go through :func:`escape_for_html` (alias
+``e``) — ``display_name`` is sanitized at the Pydantic layer for new
+users (Task 2.3), but pre-existing rows + admin-set fields could still
+carry raw HTML, so we escape on output too. The reset_url is built
+server-side from a known prefix + a HMAC token, but we escape it for
+the same reason: no path that interpolates a string into HTML should
+ever skip ``e()``.
+"""
+from services.sanitizer import escape_for_html as e
 
 
 def _base_layout(content: str) -> str:
@@ -51,7 +61,7 @@ def welcome_email(display_name: str) -> tuple[str, str]:
     """Return (subject, html) for the welcome email sent after registration."""
     subject = "Welcome to Shadow Pages"
     content = f"""\
-<h1 style="margin:0 0 16px 0;font-size:24px;font-weight:700;color:#f5f5f5;">Welcome, {display_name}!</h1>
+<h1 style="margin:0 0 16px 0;font-size:24px;font-weight:700;color:#f5f5f5;">Welcome, {e(display_name)}!</h1>
 <p style="margin:0 0 16px 0;font-size:16px;color:#cccccc;line-height:1.6;">
   Your Shadow Pages account is ready. You now have access to powerful tools for
   discovering, curating, and exporting viral content for your brand.
@@ -62,7 +72,7 @@ def welcome_email(display_name: str) -> tuple[str, str]:
 <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
   <tr>
     <td align="center" style="background-color:#22c55e;border-radius:8px;">
-      <a href="{_get_app_url()}/dashboard"
+      <a href="{e(_get_app_url())}/dashboard"
          style="display:inline-block;padding:14px 32px;font-size:16px;font-weight:600;color:#111111;text-decoration:none;">
         Go to Dashboard
       </a>
@@ -78,13 +88,13 @@ def password_reset_email(display_name: str, reset_url: str) -> tuple[str, str]:
     content = f"""\
 <h1 style="margin:0 0 16px 0;font-size:24px;font-weight:700;color:#f5f5f5;">Password Reset</h1>
 <p style="margin:0 0 16px 0;font-size:16px;color:#cccccc;line-height:1.6;">
-  Hi {display_name}, we received a request to reset your password.
+  Hi {e(display_name)}, we received a request to reset your password.
   Click the button below to choose a new one. This link expires in 1 hour.
 </p>
 <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 24px auto;">
   <tr>
     <td align="center" style="background-color:#22c55e;border-radius:8px;">
-      <a href="{reset_url}"
+      <a href="{e(reset_url)}"
          style="display:inline-block;padding:14px 32px;font-size:16px;font-weight:600;color:#111111;text-decoration:none;">
         Reset Password
       </a>
@@ -95,7 +105,7 @@ def password_reset_email(display_name: str, reset_url: str) -> tuple[str, str]:
   If the button doesn't work, copy and paste this URL into your browser:
 </p>
 <p style="margin:0;font-size:13px;color:#22c55e;line-height:1.5;word-break:break-all;">
-  {reset_url}
+  {e(reset_url)}
 </p>
 <p style="margin:24px 0 0 0;font-size:13px;color:#888888;line-height:1.5;">
   If you didn't request a password reset, you can safely ignore this email.

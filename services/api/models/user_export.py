@@ -13,7 +13,12 @@ class UserExport(UUIDMixin, Base):
     __tablename__ = "user_exports"
     user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     user_page_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("user_pages.id", ondelete="SET NULL"), nullable=True)
-    viral_reel_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("viral_reels.id", ondelete="CASCADE"), nullable=False)
+    # Source is polymorphic — exactly one of viral_reel_id /
+    # reference_reel_id is set (CHECK constraint in migrations.py).
+    # Legacy niche discovery -> viral_reel_id; new per-reference-page
+    # discovery -> reference_reel_id (Task 1.7).
+    viral_reel_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("viral_reels.id", ondelete="CASCADE"), nullable=True)
+    reference_reel_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("reference_reels.id", ondelete="CASCADE"), nullable=True)
     template_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("user_templates.id", ondelete="CASCADE"), nullable=False)
     headline_text: Mapped[str] = mapped_column(Text, nullable=False)
     headline_style: Mapped[dict] = mapped_column(JSONB, default=dict)

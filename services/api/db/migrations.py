@@ -328,6 +328,187 @@ MIGRATION_STATEMENTS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_user_templates_master
     ON user_templates (id) WHERE is_master = TRUE
     """,
+    # reference_pages: per-user inspiration list for the new per-page
+    # discovery pipeline. Capped at 5 rows per user via a trigger so the
+    # cap holds even under concurrent inserts that both passed the
+    # service-layer count check. Kept separate from user_pages so the
+    # legacy niche-based recommendation flow that reads page_type='reference'
+    # is unaffected.
+    """
+    CREATE TABLE IF NOT EXISTS reference_pages (
+        id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        ig_handle           VARCHAR(200) NOT NULL,
+        ig_user_id          VARCHAR(50),
+        ig_display_name     VARCHAR(200),
+        ig_profile_pic_url  TEXT,
+        added_at            TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_reference_pages_user_handle UNIQUE (user_id, ig_handle)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_reference_pages_user_added
+    ON reference_pages(user_id, added_at DESC)
+    """,
+    """
+    CREATE OR REPLACE FUNCTION enforce_reference_pages_max() RETURNS TRIGGER AS $$
+    BEGIN
+        IF (SELECT COUNT(*) FROM reference_pages WHERE user_id = NEW.user_id) >= 5 THEN
+            RAISE EXCEPTION 'max 5 reference pages per user'
+                USING ERRCODE = 'check_violation';
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """,
+    """
+    DROP TRIGGER IF EXISTS trg_reference_pages_max ON reference_pages
+    """,
+    """
+    CREATE TRIGGER trg_reference_pages_max
+        BEFORE INSERT ON reference_pages
+        FOR EACH ROW EXECUTE FUNCTION enforce_reference_pages_max()
+    """,
+    # discovery_filters: one row per user controlling which reels surface
+    # in the per-reference-page discovery feed. UNIQUE(user_id) so PUT can
+    # use INSERT ON CONFLICT UPDATE for clean upsert. CHECK constraints
+    # are the source of truth — Pydantic mirrors them for friendlier errors.
+    """
+    CREATE TABLE IF NOT EXISTS discovery_filters (
+        id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id             UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+        min_views           BIGINT NOT NULL DEFAULT 1000
+            CONSTRAINT ck_discovery_filters_min_views CHECK (min_views >= 0),
+        min_likes           BIGINT NOT NULL DEFAULT 10
+            CONSTRAINT ck_discovery_filters_min_likes CHECK (min_likes >= 0),
+        min_comments        BIGINT NOT NULL DEFAULT 0
+            CONSTRAINT ck_discovery_filters_min_comments CHECK (min_comments >= 0),
+        min_engagement_rate DOUBLE PRECISION NOT NULL DEFAULT 0.0
+            CONSTRAINT ck_discovery_filters_engagement_rate
+            CHECK (min_engagement_rate >= 0 AND min_engagement_rate <= 1),
+        max_age_days        INTEGER NOT NULL DEFAULT 60
+            CONSTRAINT ck_discovery_filters_max_age_days
+            CHECK (max_age_days >= 1 AND max_age_days <= 365),
+        sort_by             VARCHAR(30) NOT NULL DEFAULT 'views_desc'
+            CONSTRAINT ck_discovery_filters_sort_by
+            CHECK (sort_by IN ('views_desc','posted_at_desc','engagement_desc','likes_desc','comments_desc')),
+        updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    # reference_reels: per-reference-page reel cache feeding the new
+    # discovery feed. UNIQUE(reference_page_id, ig_media_id) makes the
+    # periodic refresh an idempotent upsert. Indexes cover the three hot
+    # query shapes: rank-by-recency (page + posted_at DESC), rank-by-views
+    # (view_count DESC), and "rows older than 1h" sweeps (fetched_at).
+    """
+    CREATE TABLE IF NOT EXISTS reference_reels (
+        id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        reference_page_id UUID NOT NULL REFERENCES reference_pages(id) ON DELETE CASCADE,
+        ig_media_id       VARCHAR(50) NOT NULL,
+        ig_code           VARCHAR(50) NOT NULL,
+        permalink         TEXT NOT NULL,
+        thumbnail_url     TEXT,
+        caption           TEXT,
+        view_count        BIGINT NOT NULL DEFAULT 0,
+        like_count        BIGINT NOT NULL DEFAULT 0,
+        comment_count     BIGINT NOT NULL DEFAULT 0,
+        duration_seconds  DOUBLE PRECISION,
+        posted_at         TIMESTAMPTZ,
+        fetched_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_reference_reels_page_media UNIQUE (reference_page_id, ig_media_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_reference_reels_page_posted
+    ON reference_reels(reference_page_id, posted_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_reference_reels_views
+    ON reference_reels(view_count DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_reference_reels_fetched
+    ON reference_reels(fetched_at)
+    """,
+    # downloads: per-user record of a reference_reel that was pulled into
+    # MinIO. UNIQUE(user_id, reference_reel_id) is the idempotency key
+    # for POST .../items/{id}/download — re-posting returns the existing
+    # row instead of triggering a second fetch. CHECK constraint mirrors
+    # the model's ALL_STATUSES tuple.
+    """
+    CREATE TABLE IF NOT EXISTS downloads (
+        id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id            UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        reference_reel_id  UUID NOT NULL REFERENCES reference_reels(id) ON DELETE CASCADE,
+        status             VARCHAR(20) NOT NULL DEFAULT 'queued'
+            CONSTRAINT ck_downloads_status
+            CHECK (status IN ('queued','downloading','done','failed')),
+        minio_key          TEXT,
+        file_size_bytes    BIGINT,
+        error_message      TEXT,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_downloads_user_reel UNIQUE (user_id, reference_reel_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_downloads_user_created
+    ON downloads(user_id, created_at DESC)
+    """,
+    # user_exports source polymorphism (Task 1.7 — editor handoff).
+    # Existing rows source from `viral_reel_id`; new rows from Discovery
+    # downloads source from `reference_reel_id`. A CHECK enforces exactly
+    # one populated so the worker exporter can dispatch on whichever FK
+    # is set without worrying about ambiguity.
+    """
+    ALTER TABLE user_exports ALTER COLUMN viral_reel_id DROP NOT NULL
+    """,
+    """
+    ALTER TABLE user_exports
+    ADD COLUMN IF NOT EXISTS reference_reel_id UUID
+        REFERENCES reference_reels(id) ON DELETE CASCADE
+    """,
+    """
+    ALTER TABLE user_exports DROP CONSTRAINT IF EXISTS ck_user_exports_source
+    """,
+    """
+    ALTER TABLE user_exports
+    ADD CONSTRAINT ck_user_exports_source
+    CHECK (
+        (viral_reel_id IS NOT NULL)::int + (reference_reel_id IS NOT NULL)::int = 1
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_user_exports_reference_reel
+    ON user_exports(reference_reel_id)
+    """,
+    # Task 2.4 — rotating refresh tokens with reuse detection. Each
+    # /login starts a new family; every /refresh rotates within the
+    # family; a replayed already-revoked token triggers a family-wide
+    # purge.
+    """
+    CREATE TABLE IF NOT EXISTS refresh_tokens (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        family_id   UUID NOT NULL,
+        token_hash  VARCHAR(64) NOT NULL,
+        issued_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at  TIMESTAMPTZ NOT NULL,
+        revoked_at  TIMESTAMPTZ
+    )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_refresh_tokens_hash
+    ON refresh_tokens(token_hash)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user
+    ON refresh_tokens(user_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family
+    ON refresh_tokens(family_id)
+    """,
     # Was VARCHAR(30) — values like 'suggested_from_<ig_handle>' can
     # exceed that and crash the deep-discovery worker mid-insert. TEXT
     # removes the limit; column cardinality is tiny so no storage cost.

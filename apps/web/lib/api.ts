@@ -269,6 +269,116 @@ export interface ScheduleUpdatePayload {
   share_to_feed?: boolean;
 }
 
+export interface ReferencePage {
+  id: string;
+  ig_handle: string;
+  ig_user_id: string | null;
+  ig_display_name: string | null;
+  ig_profile_pic_url: string | null;
+  added_at: string;
+}
+
+export interface ReferencePagesList {
+  items: ReferencePage[];
+  count: number;
+  max: number;
+}
+
+export type DiscoverySortBy =
+  | "views_desc"
+  | "posted_at_desc"
+  | "engagement_desc"
+  | "likes_desc"
+  | "comments_desc";
+
+export interface DiscoveryFilter {
+  min_views: number;
+  min_likes: number;
+  min_comments: number;
+  min_engagement_rate: number; // 0..1
+  max_age_days: number;        // 1..365
+  sort_by: DiscoverySortBy;
+  updated_at: string | null;
+  is_default: boolean;
+}
+
+export interface DiscoveryFilterPayload {
+  min_views?: number;
+  min_likes?: number;
+  min_comments?: number;
+  min_engagement_rate?: number;
+  max_age_days?: number;
+  sort_by?: DiscoverySortBy;
+}
+
+export interface DiscoveryFilterPreview {
+  count: number;
+  has_cache: boolean;
+}
+
+export interface DiscoveryItem {
+  id: string | null;            // reference_reel UUID — null for un-cached items
+  source_handle: string;
+  permalink: string;
+  media_url: string | null;
+  thumbnail: string | null;
+  caption: string | null;
+  views: number;
+  likes: number;
+  comments: number;
+  posted_at: string | null;     // ISO 8601
+  duration_seconds: number | null;
+  score: number;
+}
+
+export type DownloadStatus = "queued" | "downloading" | "done" | "failed";
+
+export interface Download {
+  id: string;
+  reference_reel_id: string;
+  status: DownloadStatus;
+  minio_key: string | null;
+  file_size_bytes: number | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SimilarResponse {
+  items: DiscoveryItem[];
+  source: { handle: string; permalink: string };
+  query: string;
+  error: string | null;
+}
+
+export interface ExportHandoff {
+  id: string;
+  viral_reel_id: string | null;
+  reference_reel_id: string | null;
+  template_id: string;
+  export_status: string;
+}
+
+export interface DiscoveryItemsResponse {
+  items: DiscoveryItem[];
+  total: number;
+  filter: {
+    min_views: number;
+    min_likes: number;
+    min_comments: number;
+    min_engagement_rate: number;
+    max_age_days: number;
+    sort_by: DiscoverySortBy;
+  };
+  has_cache: boolean;
+}
+
+export interface DiscoveryRefreshResponse {
+  queued: boolean;
+  page_count: number;
+  detail?: string;
+}
+
 // ── Fetch ────────────────────────────────────────────────────────────────
 
 interface FetchOpts extends RequestInit {
@@ -282,6 +392,33 @@ export class ApiError extends Error {
 }
 
 let _refreshing: Promise<void> | null = null;
+
+// CSRF — read the `csrf_token` cookie that the server set on a prior
+// safe request, and echo it back in `X-CSRF-Token` on every mutating
+// request. The cookie is intentionally NOT HttpOnly (see
+// services/api/middleware/csrf.py). If we somehow don't have one yet
+// (first paint, before any GET landed), we still send the request and
+// let the server's response set it for the next call.
+const _MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+function _readCsrfCookie(): string | null {
+  if (typeof document === "undefined") return null; // SSR
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+// Idempotency (Task 2.2) — every mutating request gets its own
+// Idempotency-Key so a transport-level retry (the 401-refresh retry
+// below) replays the *same* logical operation instead of double-firing.
+// One key per `req()` call: the key lives in the closure and the retry
+// re-uses the headers object that contains it.
+function _newIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  // Fallback for older runtimes (tests, ancient Safari) — 24 hex chars.
+  return Array.from({ length: 24 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+}
 
 async function _doFetch<T>(url: string, init: RequestInit, headers: Record<string, string>): Promise<T> {
   const res = await fetch(url, { ...init, headers, credentials: "include" });
@@ -307,6 +444,15 @@ async function req<T>(endpoint: string, opts: FetchOpts = {}): Promise<T> {
   }
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(init.headers as Record<string, string>) };
   if (init.body instanceof FormData) delete headers["Content-Type"];
+
+  const method = (init.method || "GET").toUpperCase();
+  if (_MUTATING_METHODS.has(method) && !headers["X-CSRF-Token"]) {
+    const csrf = _readCsrfCookie();
+    if (csrf) headers["X-CSRF-Token"] = csrf;
+  }
+  if (_MUTATING_METHODS.has(method) && !headers["Idempotency-Key"]) {
+    headers["Idempotency-Key"] = _newIdempotencyKey();
+  }
 
   try {
     return await _doFetch<T>(url, init, headers);
@@ -537,6 +683,58 @@ export const api = {
           total_interactions: number;
         };
       }>(`/api/scheduled-reels/${id}/insights`);
+    },
+  },
+
+  referencePages: {
+    list() { return req<ReferencePagesList>("/api/reference-pages"); },
+    add(ig_handle: string) {
+      return req<ReferencePage>("/api/reference-pages", {
+        method: "POST",
+        body: JSON.stringify({ ig_handle }),
+      });
+    },
+    remove(id: string) {
+      return req<void>(`/api/reference-pages/${id}`, { method: "DELETE" });
+    },
+  },
+
+  discoveryFilter: {
+    get() { return req<DiscoveryFilter>("/api/discovery-filter"); },
+    save(payload: DiscoveryFilterPayload) {
+      return req<DiscoveryFilter>("/api/discovery-filter", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+    },
+    preview(payload: DiscoveryFilterPayload) {
+      return req<DiscoveryFilterPreview>("/api/discovery-filter/preview", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+  },
+
+  discovery: {
+    items(params?: { limit?: number; offset?: number }) {
+      return req<DiscoveryItemsResponse>("/api/discovery/items", { params: params as any });
+    },
+    refresh() {
+      return req<DiscoveryRefreshResponse>("/api/discovery/refresh", { method: "POST" });
+    },
+    download(reelId: string) {
+      return req<Download>(`/api/discovery/items/${reelId}/download`, { method: "POST" });
+    },
+    downloadStatus(downloadId: string) {
+      return req<Download>(`/api/discovery/downloads/${downloadId}`);
+    },
+    findSimilar(reelId: string) {
+      return req<SimilarResponse>(`/api/discovery/items/${reelId}/similar`);
+    },
+    edit(downloadId: string) {
+      return req<ExportHandoff>(`/api/discovery/downloads/${downloadId}/edit`, {
+        method: "POST",
+      });
     },
   },
 };

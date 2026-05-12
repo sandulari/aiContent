@@ -18,6 +18,11 @@ from models.job import Job
 from models.user_page_reel import UserPageReel
 from models.reel_profile import ReelProfile
 from models.scheduled_reel import ScheduledReel
+from models.reference_page import ReferencePage
+from models.discovery_filter import DiscoveryFilter
+from models.reference_reel import ReferenceReel
+from models.download import Download
+from models.refresh_token import RefreshToken
 
 __all__ = [
     "Base", "UUIDMixin",
@@ -29,4 +34,9 @@ __all__ = [
     "AITextGeneration", "DiscoveryRun", "Job",
     "UserPageReel", "ReelProfile",
     "ScheduledReel",
+    "ReferencePage",
+    "DiscoveryFilter",
+    "ReferenceReel",
+    "Download",
+    "RefreshToken",
 ]
