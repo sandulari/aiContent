@@ -328,6 +328,13 @@ MIGRATION_STATEMENTS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_user_templates_master
     ON user_templates (id) WHERE is_master = TRUE
     """,
+    # Was VARCHAR(30) — values like 'suggested_from_<ig_handle>' can
+    # exceed that and crash the deep-discovery worker mid-insert. TEXT
+    # removes the limit; column cardinality is tiny so no storage cost.
+    """
+    ALTER TABLE theme_pages
+    ALTER COLUMN discovered_via TYPE TEXT
+    """,
 ]
 
 

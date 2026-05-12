@@ -21,7 +21,11 @@ class ThemePage(UUIDMixin, Base):
     scrape_interval_minutes: Mapped[int] = mapped_column(Integer, default=60)
     min_views_threshold: Mapped[int] = mapped_column(BigInteger, default=500000)
     last_scraped_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    discovered_via: Mapped[str] = mapped_column(String(30), default="manual_seed")
+    # Was VARCHAR(30) — too narrow for 'suggested_from_<ig_handle>'
+    # values, which can hit 45+ chars and crash the deep-discovery
+    # worker on insert. TEXT removes the limit altogether (small column
+    # cardinality means no storage cost).
+    discovered_via: Mapped[str] = mapped_column(Text, default="manual_seed")
     discovered_from_page_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("theme_pages.id", ondelete="SET NULL"), nullable=True)
     heuristic_score: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     viral_hit_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
