@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from celery_client import trigger_export_render
 from db.session import get_db
@@ -186,10 +186,16 @@ async def list_exports(current_user: User = Depends(get_current_user), db: Async
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_export(body: ExportCreateRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    # Master templates (shipped with the app) have user_id NULL and
+    # are selectable by every user; per-user templates are restricted
+    # to the owner. Reject anything else.
     tmpl = (await db.execute(
         select(UserTemplate).where(
             UserTemplate.id == body.template_id,
-            UserTemplate.user_id == current_user.id,
+            or_(
+                UserTemplate.user_id == current_user.id,
+                UserTemplate.user_id.is_(None),
+            ),
         )
     )).scalar_one_or_none()
     if not tmpl:
@@ -260,9 +266,15 @@ async def apply_template(
     if not export:
         raise HTTPException(status_code=404, detail="Export not found")
 
+    # Same master-template carve-out as create_export — user_id NULL
+    # means a shipped-with-the-app template that all users can pick.
     tmpl_result = await db.execute(
         select(UserTemplate).where(
-            UserTemplate.id == template_id, UserTemplate.user_id == current_user.id
+            UserTemplate.id == template_id,
+            or_(
+                UserTemplate.user_id == current_user.id,
+                UserTemplate.user_id.is_(None),
+            ),
         )
     )
     tmpl = tmpl_result.scalar_one_or_none()
