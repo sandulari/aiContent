@@ -449,9 +449,13 @@ async def oauth_refresh(
         plain = decrypt_token(current_user.ig_access_token)
     except TokenDecryptionError:
         # Key rotated or copied from another env — force reconnect.
+        # COMMIT explicitly: get_db rolls back on HTTPException, which
+        # would undo the nulling and leave the user stuck with an
+        # unreadable token (every future /refresh would fail the same
+        # way with no way out).
         current_user.ig_access_token = None
         current_user.ig_token_expires_at = None
-        await db.flush()
+        await db.commit()
         raise HTTPException(
             status_code=401,
             detail="Stored token is unreadable — please reconnect Instagram",
