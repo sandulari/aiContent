@@ -293,7 +293,7 @@ def _load_reference_reel_captions(session, ref_page_ids: list[str],
                     SELECT vr.caption
                     FROM viral_reels vr
                     JOIN theme_pages tp ON tp.id = vr.theme_page_id
-                    JOIN user_pages up ON LOWER(up.ig_username) = LOWER(tp.ig_username)
+                    JOIN user_pages up ON LOWER(up.ig_username) = LOWER(tp.username)
                     WHERE up.id = :pid
                       AND vr.caption IS NOT NULL AND vr.caption != ''
                     ORDER BY vr.view_count DESC
