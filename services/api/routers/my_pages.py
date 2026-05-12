@@ -372,47 +372,22 @@ async def add_page(
         except Exception as exc2:
             logger.warning("In-process fallback also failed for @%s: %s", username, exc2)
 
-    # Immediately scrape profile + reels so dashboard has data right away
-    try:
-        from services.instagram_api import get_profile, get_user_reels
-
-        profile = await get_profile(username)
-        if profile:
-            page.follower_count = profile.get("follower_count") or profile.get("followers")
-            page.total_posts = profile.get("media_count")
-            if profile.get("full_name"):
-                page.ig_display_name = profile["full_name"]
-            if profile.get("profile_pic_url"):
-                page.ig_profile_pic_url = profile["profile_pic_url"]
-            page.last_scraped_at = datetime.utcnow()
-            user_pk = profile.get("pk")
-            if user_pk:
-                reels = await get_user_reels(str(user_pk))
-                for reel in reels:
-                    code = reel.get("shortcode") or reel.get("code", "")
-                    if not code:
-                        continue
-                    posted_at = None
-                    taken_at = reel.get("taken_at")
-                    if taken_at:
-                        posted_at = datetime.fromtimestamp(taken_at, tz=timezone.utc)
-                    caption = reel.get("caption", "")
-                    if isinstance(caption, dict):
-                        caption = caption.get("text", "")
-                    db.add(UserPageReel(
-                        user_page_id=page.id,
-                        ig_code=code,
-                        posted_at=posted_at,
-                        view_count=int(reel.get("view_count") or reel.get("play_count") or 0),
-                        like_count=int(reel.get("like_count", 0)),
-                        comment_count=int(reel.get("comment_count", 0)),
-                        caption=str(caption)[:500] if caption else None,
-                        scraped_at=datetime.utcnow(),
-                    ))
-            await db.commit()
-            await db.refresh(page)
-    except Exception as exc:
-        logger.warning("Initial reel scrape failed for @%s: %s", username, exc)
+    # NOTE: the inline RapidAPI profile + reels scrape that used to live
+    # here blocked the POST for 5-15s per page (two synchronous IG
+    # scraper calls). Onboarding adds 3-5 reference pages in a row and
+    # the cumulative wait was a UX killer.
+    #
+    # The ``trigger_page_stats_snapshot`` task already queued above
+    # fills `follower_count`, `ig_profile_pic_url`, and per-reel rows
+    # asynchronously, so we no longer need to do it inline. The page
+    # row in the response will have a placeholder avatar until the
+    # snapshot task finishes (~10-30s); the frontend refetches on
+    # /api/my-pages so it'll fill in on the next list call.
+    #
+    # If you ever want to bring back synchronous scrape for *own* pages
+    # only (where dashboard-on-first-render matters most), gate it on
+    # ``body.page_type == "own"`` — don't bring back the unconditional
+    # version.
 
     return PageResponse(
         id=str(page.id),

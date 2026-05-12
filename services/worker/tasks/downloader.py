@@ -89,13 +89,15 @@ def download_video_task(self, reel_id: str, source_id: str):
         # walls, falls through to Playwright. If RapidAPI already
         # succeeded above, this whole block is skipped.
         if result is None:
+            ytdlp_err: Exception | None = None
             try:
                 result = download_video(source_url, video_id)
                 logger.info("Download path: yt-dlp for %s", video_id)
-            except Exception as ytdlp_err:
+            except Exception as exc:
+                ytdlp_err = exc
                 logger.warning(
                     "yt-dlp failed for %s, trying Playwright browser: %s",
-                    video_id, str(ytdlp_err)[:100],
+                    video_id, str(exc)[:100],
                 )
                 from lib.playwright_dl import download_via_playwright
                 pw_result = download_via_playwright(source_url, video_id)
@@ -112,8 +114,42 @@ def download_video_task(self, reel_id: str, source_id: str):
                         file_size=pw_result.get("file_size", 0),
                     )
                     logger.info("Download path: playwright for %s", video_id)
-                else:
-                    raise ytdlp_err  # All three paths failed
+
+        # 4. IG-direct fallback — last resort when every YouTube path
+        # failed (datacenter IP blocked by YouTube, RapidAPI 429'd on
+        # YouTube, Playwright also blocked). The reel exists on IG by
+        # definition, so we drop the "no-fingerprint" optimisation and
+        # download the canonical IG URL via RapidAPI. Worse for re-upload
+        # detection downstream but a working file beats a FAILED badge.
+        if result is None:
+            try:
+                with get_session() as session:
+                    reel_row = session.execute(
+                        text("SELECT ig_video_id FROM viral_reels WHERE id = :id"),
+                        {"id": video_id},
+                    ).fetchone()
+                ig_id = reel_row.ig_video_id if reel_row else None
+                if ig_id:
+                    ig_url = f"https://www.instagram.com/reel/{ig_id}/"
+                    from lib.rapidapi_dl import download_via_rapidapi, is_configured as _rapidapi_configured
+                    if _rapidapi_configured():
+                        logger.info(
+                            "All YouTube paths failed for %s; trying IG-direct via RapidAPI: %s",
+                            video_id, ig_url,
+                        )
+                        ig_result = download_via_rapidapi(ig_url, video_id)
+                        if ig_result:
+                            result = ig_result
+                            logger.info("Download path: rapidapi/ig-direct for %s", video_id)
+            except Exception as ig_exc:
+                logger.warning("IG-direct fallback errored: %s", ig_exc)
+
+        if result is None:
+            # Surface the original yt-dlp error for log fidelity if we
+            # had one; otherwise a generic message.
+            raise ytdlp_err or RuntimeError(
+                f"All download paths exhausted for {video_id} (rapidapi, yt-dlp, playwright, ig-direct)"
+            )
 
         # Upload to MinIO
         minio_key = f"{video_id}/{os.path.basename(result.file_path)}"
