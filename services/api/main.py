@@ -28,6 +28,13 @@ app.add_middleware(
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
+# Idempotency (Task 2.2) — Idempotency-Key header support for mutating
+# routes. Added BEFORE CSRF so CSRF still validates incoming requests
+# (Starlette runs middleware in REVERSE order — last added runs first
+# in the request path). A cached idempotent replay never bypasses CSRF.
+from middleware.idempotency import IdempotencyMiddleware
+app.add_middleware(IdempotencyMiddleware)
+
 # CSRF (Task 2.1) — double-submit cookie on mutating routes. Must be
 # added AFTER CORS so the cookie is set on the response after CORS
 # headers have been merged. Order matters: Starlette runs middleware

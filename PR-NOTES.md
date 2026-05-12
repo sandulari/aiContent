@@ -16,6 +16,7 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 | `d445d36` | feat | off-IG similar content (Task 1.6) + ARCHITECTURE.md |
 | `67dcfb8` | feat | editor handoff + scheduler tests (Task 1.7) |
 | `004f062` | feat | CSRF double-submit cookie (Task 2.1) |
+| _pending_ | feat | Idempotency-Key middleware (Task 2.2) |
 
 ## What's in this PR (so far)
 
@@ -405,7 +406,57 @@ mutating tests don't all 403. Tests that exercise the rejection path
 use the raw `client` fixture and set the access-token cookie
 themselves so they can control the CSRF state explicitly.
 
+### `feat: Idempotency-Key middleware (Task 2.2)`
+
+Standard `Idempotency-Key` header support on mutating routes — clients
+that retry an in-flight POST/PUT/PATCH/DELETE with the same key + same
+body get the cached response instead of double-applying the side
+effect. Same key + different body returns 409.
+
+**Middleware** (`services/api/middleware/idempotency.py`):
+- Reads `Idempotency-Key` on POST/PUT/PATCH/DELETE; safe methods and
+  unkeyed requests pass through untouched.
+- Validates the key against `^[A-Za-z0-9_\-]{8,128}$` — bogus values
+  return 400 `invalid_idempotency_key` (so we don't pollute Redis
+  with junk and so clients see their bug immediately).
+- Drains the request body, hashes it, and re-injects it via
+  `request._receive` so the downstream app still sees the body.
+- Cache key is `idem:{sha256(access_token)[:16]}:{method}:{path}?{query}:{key}`
+  so users are isolated AND a key reused across different routes
+  doesn't collide. Anonymous requests share the `anon` slot.
+- On hit: same body hash → cached response with `Idempotent-Replay: true`;
+  different body hash → 409 `idempotency_key_conflict`.
+- On miss: runs the handler, caches the response for 24h ONLY if the
+  status is 2xx AND no `Set-Cookie` header is present. The Set-Cookie
+  guard means `/api/auth/login` is not silently cached without its
+  `access_token` cookie (which would leave the replayed client logged
+  out without realizing it).
+
+**Middleware order** (`main.py`): CORS → Idempotency → CSRF. Starlette
+runs middleware in REVERSE add order in the request path, so CSRF
+gates incoming requests first — a cached replay can NEVER bypass
+CSRF validation. Idempotency captures the response before CSRF sets
+its `csrf_token` cookie on the way out, which is correct: the CSRF
+middleware always re-issues a fresh cookie on every response anyway.
+
+**Frontend** (`apps/web/lib/api.ts`): every mutating call generates
+its own `Idempotency-Key` via `crypto.randomUUID()`. The key lives
+in the request-local `headers` object, so the 401-refresh retry
+path replays with the *same* key — that's the entire reason the
+header exists. SSR-safe with a hex-string fallback.
+
+**Tests** (`services/api/tests/test_idempotency.py`, 8 cases):
+- spec bullets: same key + same body → cached replay (DB has 1 row);
+  same key + different body → 409
+- no key → no caching (each call hits handler, no `Idempotent-Replay`)
+- different keys → independent
+- per-user scoping: user A's key doesn't shadow user B's request
+- safe methods + bad key format + non-2xx not cached
+
+Tests use `fakeredis` injected via `idempotency._test_client` so the
+suite never needs a real Redis (same pattern as the rate limiter).
+
 ## Still pending (in this branch)
-- Phase 2 hardening (idempotency, XSS, refresh-token reuse-detection,
-  CORS allowlist, CSP)
+- Phase 2 hardening (XSS, refresh-token reuse-detection, CORS
+  allowlist, CSP)
 - Worker exporter dispatch for reference_reel_id (FOUND-ISSUES #7)

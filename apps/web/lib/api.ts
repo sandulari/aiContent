@@ -407,6 +407,19 @@ function _readCsrfCookie(): string | null {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+// Idempotency (Task 2.2) — every mutating request gets its own
+// Idempotency-Key so a transport-level retry (the 401-refresh retry
+// below) replays the *same* logical operation instead of double-firing.
+// One key per `req()` call: the key lives in the closure and the retry
+// re-uses the headers object that contains it.
+function _newIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  // Fallback for older runtimes (tests, ancient Safari) — 24 hex chars.
+  return Array.from({ length: 24 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+}
+
 async function _doFetch<T>(url: string, init: RequestInit, headers: Record<string, string>): Promise<T> {
   const res = await fetch(url, { ...init, headers, credentials: "include" });
   if (!res.ok) {
@@ -436,6 +449,9 @@ async function req<T>(endpoint: string, opts: FetchOpts = {}): Promise<T> {
   if (_MUTATING_METHODS.has(method) && !headers["X-CSRF-Token"]) {
     const csrf = _readCsrfCookie();
     if (csrf) headers["X-CSRF-Token"] = csrf;
+  }
+  if (_MUTATING_METHODS.has(method) && !headers["Idempotency-Key"]) {
+    headers["Idempotency-Key"] = _newIdempotencyKey();
   }
 
   try {
