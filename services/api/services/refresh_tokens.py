@@ -120,7 +120,14 @@ async def rotate_refresh_token(db: AsyncSession, raw_token: str) -> RotationOutc
         await db.execute(
             delete(RefreshToken).where(RefreshToken.family_id == row.family_id)
         )
-        await db.flush()
+        # COMMIT explicitly here: the auth router will raise HTTPException
+        # on REUSE to return 401, which trips the get_db dependency's
+        # `except Exception -> rollback` and would silently undo the
+        # family deletion. Committing inside this function makes the
+        # purge survive the HTTPException path. (This is the whole
+        # point of reuse-detection — if rollback wins, the attacker's
+        # successor token stays valid and we'd ship Task 2.4 broken.)
+        await db.commit()
         return RotationOutcome(
             result=RotationResult.REUSE,
             user_id=row.user_id,
@@ -129,9 +136,12 @@ async def rotate_refresh_token(db: AsyncSession, raw_token: str) -> RotationOutc
 
     if row.expires_at < now:
         # Past expiry — mark it revoked so a future replay would still
-        # be caught as REUSE, then refuse.
+        # be caught as REUSE, then refuse. Same commit-before-raise
+        # reasoning as the REUSE branch above: the handler will raise
+        # HTTPException(401) and the dependency rollback would undo
+        # the revoked_at write otherwise.
         row.revoked_at = now
-        await db.flush()
+        await db.commit()
         return RotationOutcome(
             result=RotationResult.EXPIRED,
             user_id=row.user_id,
