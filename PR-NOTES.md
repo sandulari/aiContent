@@ -16,7 +16,7 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 | `d445d36` | feat | off-IG similar content (Task 1.6) + ARCHITECTURE.md |
 | `67dcfb8` | feat | editor handoff + scheduler tests (Task 1.7) |
 | `004f062` | feat | CSRF double-submit cookie (Task 2.1) |
-| _pending_ | feat | Idempotency-Key middleware (Task 2.2) |
+| `3b81e15` | feat | Idempotency-Key middleware (Task 2.2) |
 
 ## What's in this PR (so far)
 
