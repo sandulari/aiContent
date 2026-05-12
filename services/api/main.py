@@ -1,10 +1,10 @@
-import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from db.session import engine
 from db.migrations import run_migrations
 from db.seed_master_templates import seed_master_templates
+from middleware.cors_config import cors_kwargs
 from models.base import Base
 import models  # noqa: F401 — triggers registration of every SQLAlchemy model
 from routers import auth, my_pages, recommendations, reels, templates, exports, ai, files, niches, jobs, ig_oauth, scheduled_reels, reference_pages, discovery_filters, discovery_items
@@ -22,11 +22,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Viral Reel Engine v2", version="2.0.0", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8080").split(","),
-    allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
-)
+# CORS (Task 2.5) — strict allowlist driven by ALLOWED_ORIGINS env.
+# No '*' origin allowed when credentials are enabled (browsers ignore
+# it anyway). Methods + request headers + exposed response headers are
+# enumerated explicitly — see middleware/cors_config.py for the lists.
+app.add_middleware(CORSMiddleware, **cors_kwargs(allow_credentials=True))
 
 # Idempotency (Task 2.2) — Idempotency-Key header support for mutating
 # routes. Added BEFORE CSRF so CSRF still validates incoming requests

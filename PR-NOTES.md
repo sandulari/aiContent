@@ -19,6 +19,7 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 | `3b81e15` | feat | Idempotency-Key middleware (Task 2.2) |
 | `ffd0f3a` | feat | XSS sanitization — bleach + DOMPurify (Task 2.3) |
 | `ddb33ae` | feat | rotating refresh tokens + reuse detection (Task 2.4) |
+| _pending_ | feat | strict CORS allowlist (Task 2.5) |
 
 ## What's in this PR (so far)
 
@@ -573,6 +574,53 @@ later replay still trips REUSE rather than silently being UNKNOWN.
 Per-IP auth rate limiter is cleared in an autouse fixture so the test
 suite can't accidentally trip the 5-register / 8-login caps.
 
+### `feat: strict CORS allowlist (Task 2.5)`
+
+Replace the previous `allow_methods=["*"] / allow_headers=["*"]` setup
+with a strict allowlist driven by `ALLOWED_ORIGINS` env. The actual
+exploit it closed is FOUND-ISSUES #5: with `allow_credentials=True`,
+browsers ignore a wildcard origin and FastAPI's `CORSMiddleware`
+falls back to echoing the request origin — functionally an open
+allowlist that any site can read responses from. We now reject `*` +
+credentials at startup so the misconfiguration can't ship.
+
+**New module** (`services/api/middleware/cors_config.py`):
+- `parse_allowed_origins(raw, *, allow_credentials)` — splits the env
+  string, strips whitespace, drops empties. Raises `InsecureCORSConfig`
+  if `*` appears with credentials enabled.
+- `cors_kwargs(env=…)` — assembles the kwargs for
+  `app.add_middleware(CORSMiddleware, **kw)`. Reads `ALLOWED_ORIGINS`
+  first, falls back to legacy `CORS_ORIGINS` (in-place deploys keep
+  working), then the localhost dev defaults.
+- Methods enumerated: `GET, POST, PUT, PATCH, DELETE, OPTIONS`.
+  Request headers enumerated: `Content-Type, Authorization,
+  X-CSRF-Token` (Task 2.1), `Idempotency-Key` (Task 2.2).
+- `expose_headers`: `Idempotent-Replay` (so JS can tell a cached
+  replay from a fresh execution) + `Retry-After` (so the 429 retry
+  UI works).
+- `max_age=600` to cache preflight OPTIONS for 10 min.
+
+**Infra**:
+- `docker-compose.yml` — dev default switched from `CORS_ORIGINS=*`
+  (which would now fail at startup) to the localhost list, and the
+  env var is renamed to `ALLOWED_ORIGINS`.
+- `infra/.env.production.template` — `CORS_ORIGINS` → `ALLOWED_ORIGINS`
+  with a note about the no-`*`-with-credentials rule.
+
+**Tests** (`services/api/tests/test_cors_config.py`, 13 cases):
+- Unit: parse comma-list / strip whitespace / fall back to defaults
+  / `*` + credentials → `InsecureCORSConfig` / `*` without
+  credentials → allowed.
+- `cors_kwargs`: prefers `ALLOWED_ORIGINS`, falls back to
+  `CORS_ORIGINS`, methods + headers enumerated (no `*`), exposes
+  `Idempotent-Replay` + `Retry-After`.
+- HTTP end-to-end: GET with allowed `Origin` echoes
+  `Access-Control-Allow-Origin`; disallowed origin has no ACAO
+  header; preflight OPTIONS for a POST with `X-CSRF-Token` +
+  `Idempotency-Key` is permitted.
+
+Closes FOUND-ISSUES #5.
+
 ## Still pending (in this branch)
-- Phase 2 hardening (CORS allowlist, CSP + security headers)
+- Phase 2 hardening (CSP + security headers)
 - Worker exporter dispatch for reference_reel_id (FOUND-ISSUES #7)

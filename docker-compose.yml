@@ -81,7 +81,9 @@ services:
       RAPIDAPI_KEY: ${RAPIDAPI_KEY}
       AI_PROVIDER: ${AI_PROVIDER:-anthropic}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      # Task 2.5 — no '*' with credentials. Default to localhost dev
+      # origins; prod must set ALLOWED_ORIGINS to its real frontend host.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8080}
       APP_URL: ${APP_URL}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}

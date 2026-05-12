@@ -57,16 +57,10 @@ the family; a replayed revoked token triggers a family-wide purge.
 
 ## 5. `CORSMiddleware` wildcard origin + `allow_credentials=True` is unsafe
 
-`services/api/main.py:25-29`:
-```python
-allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8080").split(","),
-allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
-```
-
-Per the CORS spec, browsers refuse to send credentials with `*` origin.
-FastAPI's `CORSMiddleware` works around it by echoing the request origin,
-which is functionally an open allowlist. Phase 2.5 will replace with a
-strict `ALLOWED_ORIGINS` env-driven list.
+**RESOLVED in Task 2.5** — strict ``ALLOWED_ORIGINS`` allowlist with
+``*`` rejected at startup; methods + request headers + exposed response
+headers all enumerated explicitly in
+``services/api/middleware/cors_config.py``.
 
 ## 6. Discovery refresh runs in-process via BackgroundTasks instead of Celery
 
