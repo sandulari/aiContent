@@ -47,27 +47,13 @@ Defer to after Phase 1 is complete and we have user data to inform the call.
 
 ## 3. Access token default of 60 minutes vs Phase 2.4 spec of 15
 
-`services/api/middleware/auth.py:21`:
-```python
-ACCESS_TOKEN_MINUTES = int(os.getenv("ACCESS_TOKEN_MINUTES", "60"))
-```
-
-Phase 2.4 spec wants 15. Will be lowered in Task 2.4 alongside the
-rotating-refresh-token + reuse-detection work.
+**RESOLVED in Task 2.4** (commit `ddb33ae`) — default lowered to 15.
 
 ## 4. Refresh-token reuse detection missing
 
-`services/api/middleware/auth.py` + `routers/auth.py` use a single
-SHA-256 hash on `users.refresh_token`. Rotation works (overwrite on each
-`/refresh`), but a replayed old refresh token cannot be detected as a
-reuse — it just fails because the hash already changed. Spec (Task 2.4)
-wants the entire token family revoked on a reuse attempt.
-
-Fix sketch: separate `refresh_tokens` table keyed by `(family_id,
-token_hash)`. On `/refresh`, validate the presented hash exists with
-`revoked_at IS NULL`; mark it revoked and insert a successor in the same
-family. On a presented hash that is `revoked_at IS NOT NULL`, delete
-every row in that family and force re-login.
+**RESOLVED in Task 2.4** (commit `ddb33ae`) — new ``refresh_tokens``
+table keyed by ``(family_id, token_hash)``. ``/refresh`` rotates within
+the family; a replayed revoked token triggers a family-wide purge.
 
 ## 5. `CORSMiddleware` wildcard origin + `allow_credentials=True` is unsafe
 

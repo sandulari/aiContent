@@ -18,7 +18,7 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 | `004f062` | feat | CSRF double-submit cookie (Task 2.1) |
 | `3b81e15` | feat | Idempotency-Key middleware (Task 2.2) |
 | `ffd0f3a` | feat | XSS sanitization — bleach + DOMPurify (Task 2.3) |
-| _pending_ | feat | rotating refresh tokens + reuse detection (Task 2.4) |
+| `ddb33ae` | feat | rotating refresh tokens + reuse detection (Task 2.4) |
 
 ## What's in this PR (so far)
 
