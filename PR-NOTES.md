@@ -20,7 +20,7 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 | `ffd0f3a` | feat | XSS sanitization — bleach + DOMPurify (Task 2.3) |
 | `ddb33ae` | feat | rotating refresh tokens + reuse detection (Task 2.4) |
 | `f0d5cac` | feat | strict CORS allowlist (Task 2.5) |
-| _pending_ | feat | CSP + security headers (Task 2.6) |
+| `df8e252` | feat | CSP + security headers (Task 2.6) |
 
 ## What's in this PR (so far)
 
@@ -683,7 +683,7 @@ All six security tasks shipped on this branch:
 - 2.3 XSS sanitization (bleach + DOMPurify) — `ffd0f3a`
 - 2.4 Rotating refresh tokens + reuse detection — `ddb33ae`
 - 2.5 Strict CORS allowlist — `f0d5cac`
-- 2.6 CSP + security headers — _this commit_
+- 2.6 CSP + security headers — `df8e252`
 
 Plus Phase 1 (per-reference-page discovery + downloads + editor
 handoff). FOUND-ISSUES has the parked items (#1 worker-enhancer
