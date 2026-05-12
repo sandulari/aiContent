@@ -482,6 +482,33 @@ MIGRATION_STATEMENTS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_user_exports_reference_reel
     ON user_exports(reference_reel_id)
     """,
+    # Task 2.4 — rotating refresh tokens with reuse detection. Each
+    # /login starts a new family; every /refresh rotates within the
+    # family; a replayed already-revoked token triggers a family-wide
+    # purge.
+    """
+    CREATE TABLE IF NOT EXISTS refresh_tokens (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        family_id   UUID NOT NULL,
+        token_hash  VARCHAR(64) NOT NULL,
+        issued_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at  TIMESTAMPTZ NOT NULL,
+        revoked_at  TIMESTAMPTZ
+    )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_refresh_tokens_hash
+    ON refresh_tokens(token_hash)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user
+    ON refresh_tokens(user_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family
+    ON refresh_tokens(family_id)
+    """,
 ]
 
 

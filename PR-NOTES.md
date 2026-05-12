@@ -18,6 +18,7 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 | `004f062` | feat | CSRF double-submit cookie (Task 2.1) |
 | `3b81e15` | feat | Idempotency-Key middleware (Task 2.2) |
 | `ffd0f3a` | feat | XSS sanitization — bleach + DOMPurify (Task 2.3) |
+| _pending_ | feat | rotating refresh tokens + reuse detection (Task 2.4) |
 
 ## What's in this PR (so far)
 
@@ -508,7 +509,70 @@ injection sink we close here.
   allow-listed inline tags; returns "" for nullish. `stripHtml`
   returns plain text only.
 
+### `feat: rotating refresh tokens + reuse detection (Task 2.4)`
+
+Replaces the single-hash `users.refresh_token` column with a dedicated
+`refresh_tokens` table keyed by `(family_id, token_hash)`. Each
+`/api/auth/login` (or register) starts a new family; every
+`/api/auth/refresh` marks the presented row revoked and inserts a
+successor in the SAME family. A replay of an already-revoked token
+is detected as reuse — the entire family is deleted and the client
+is forced to re-login. Closes FOUND-ISSUES #3 (15-min access TTL)
+and #4 (reuse detection).
+
+**Access token TTL**: default lowered from 60 → **15 minutes** per
+the spec.
+
+**New table** (`refresh_tokens`):
+```
+id, user_id (FK -> users ON DELETE CASCADE),
+family_id (uuid, not FK — group label),
+token_hash (sha256, UNIQUE), issued_at, expires_at, revoked_at
+```
+
+Indexes on `user_id` and `family_id`. Migration appended to
+`db/migrations.py`. The legacy `users.refresh_token{,_expires}` columns
+are now dead code — left in the model with a DEPRECATED comment for
+a future drop-column migration; no code path reads or writes them.
+
+**Service module** (`services/api/services/refresh_tokens.py`):
+- `issue_new_family(db, user_id)` — login / register entry point
+- `rotate_refresh_token(db, raw)` — returns a `RotationOutcome` with
+  a `result` enum the router branches on: `ROTATED` / `REUSE` /
+  `EXPIRED` / `UNKNOWN`
+- `revoke_token(db, raw)` — logout
+
+On REUSE: `DELETE FROM refresh_tokens WHERE family_id = ?` purges
+both the active successor AND the revoked predecessors. The legitimate
+user AND the attacker both have to log in fresh — the chain can't
+continue. On EXPIRED: row is marked revoked (not deleted) so a
+later replay still trips REUSE rather than silently being UNKNOWN.
+
+**Router** (`routers/auth.py`):
+- `_issue_login_session` replaces the old `_issue_tokens`; starts a
+  fresh family.
+- `/refresh` branches on the outcome, emits typed error codes
+  (`refresh_token_reuse` | `refresh_token_expired` | `invalid_refresh_token`)
+  inside the HTTPException detail so the frontend can render a
+  specific message ("your session may have been compromised — log in
+  again").
+- `/logout` revokes the current token but leaves the family in place
+  so a later replay still trips REUSE.
+
+**Tests** (`services/api/tests/test_refresh_tokens.py`, 13 cases):
+- access-token TTL default = 15
+- service layer state machine: rotate happy path, reuse → family
+  purge, unknown → UNKNOWN, expired → row marked revoked, logout
+  revoke
+- HTTP end-to-end: login inserts row; /refresh rotates (old revoked,
+  new active, same family); replay of revoked cookie returns 401
+  `refresh_token_reuse` AND family is gone; unknown cookie returns
+  `invalid_refresh_token`; no cookie → 401; logout revokes current
+  row without touching the family
+
+Per-IP auth rate limiter is cleared in an autouse fixture so the test
+suite can't accidentally trip the 5-register / 8-login caps.
+
 ## Still pending (in this branch)
-- Phase 2 hardening (refresh-token reuse-detection, CORS allowlist,
-  CSP + security headers)
+- Phase 2 hardening (CORS allowlist, CSP + security headers)
 - Worker exporter dispatch for reference_reel_id (FOUND-ISSUES #7)

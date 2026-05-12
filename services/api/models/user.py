@@ -36,6 +36,9 @@ class User(UUIDMixin, Base):
     updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, server_default=func.now(), onupdate=datetime.utcnow)
     password_reset_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     password_reset_expires: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # DEPRECATED — superseded by the ``refresh_tokens`` table (Task 2.4).
+    # Columns kept for backwards compatibility with old DBs; no code path
+    # reads or writes them anymore. Safe to drop in a future migration.
     refresh_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     refresh_token_expires: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 

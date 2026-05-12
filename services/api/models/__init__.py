@@ -22,6 +22,7 @@ from models.reference_page import ReferencePage
 from models.discovery_filter import DiscoveryFilter
 from models.reference_reel import ReferenceReel
 from models.download import Download
+from models.refresh_token import RefreshToken
 
 __all__ = [
     "Base", "UUIDMixin",
@@ -37,4 +38,5 @@ __all__ = [
     "DiscoveryFilter",
     "ReferenceReel",
     "Download",
+    "RefreshToken",
 ]

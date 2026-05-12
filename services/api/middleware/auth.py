@@ -18,7 +18,7 @@ if not JWT_SECRET:
     JWT_SECRET = "dev-only-insecure-secret-do-not-use-in-production"
     warnings.warn("JWT_SECRET not set — using insecure development default", stacklevel=1)
 
-ACCESS_TOKEN_MINUTES = int(os.getenv("ACCESS_TOKEN_MINUTES", "60"))
+ACCESS_TOKEN_MINUTES = int(os.getenv("ACCESS_TOKEN_MINUTES", "15"))
 REFRESH_TOKEN_DAYS = 7
 COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # None = current domain
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() == "true"
@@ -74,19 +74,10 @@ def verify_access_token(token: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Refresh token (long-lived random string, stored hashed in DB)
+# Refresh tokens: see services/refresh_tokens.py — rotating tokens with
+# reuse detection (Task 2.4). The raw + hashed helpers live there now,
+# next to the rotation state machine.
 # ---------------------------------------------------------------------------
-
-def create_refresh_token() -> tuple[str, str, datetime]:
-    """Returns (raw_token, hashed_token, expires_at)."""
-    raw = secrets.token_hex(32)
-    hashed = hashlib.sha256(raw.encode()).hexdigest()
-    expires = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_DAYS)
-    return raw, hashed, expires
-
-
-def hash_token(raw: str) -> str:
-    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
