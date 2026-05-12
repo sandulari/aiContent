@@ -43,6 +43,13 @@ app.add_middleware(IdempotencyMiddleware)
 from middleware.csrf import CSRFMiddleware
 app.add_middleware(CSRFMiddleware)
 
+# Security headers (Task 2.6) — added LAST so it runs FIRST in request
+# path and LAST in response path. That way every response — including
+# the CSRF 403, the auth 401, and validation 422s — gets CSP / HSTS /
+# nosniff / frame-deny / referrer / permissions headers on the way out.
+from middleware.security_headers import SecurityHeadersMiddleware
+app.add_middleware(SecurityHeadersMiddleware)
+
 app.include_router(auth.router)
 app.include_router(my_pages.router)
 app.include_router(recommendations.router)

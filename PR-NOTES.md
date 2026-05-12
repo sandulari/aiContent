@@ -20,6 +20,7 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 | `ffd0f3a` | feat | XSS sanitization — bleach + DOMPurify (Task 2.3) |
 | `ddb33ae` | feat | rotating refresh tokens + reuse detection (Task 2.4) |
 | `f0d5cac` | feat | strict CORS allowlist (Task 2.5) |
+| _pending_ | feat | CSP + security headers (Task 2.6) |
 
 ## What's in this PR (so far)
 
@@ -621,6 +622,72 @@ credentials at startup so the misconfiguration can't ship.
 
 Closes FOUND-ISSUES #5.
 
-## Still pending (in this branch)
-- Phase 2 hardening (CSP + security headers)
+### `feat: CSP + security headers (Task 2.6)`
+
+Final Phase 2 task — OWASP-recommended response headers on every
+response from BOTH the API and the Next.js frontend.
+
+**API** (`services/api/middleware/security_headers.py`):
+- New `SecurityHeadersMiddleware` added LAST so it's the OUTERMOST
+  wrapper. Every response — including the CSRF 403, the auth 401,
+  validation 422s, and the idempotency 409 — gets headers stamped
+  on the way out.
+- `Content-Security-Policy: default-src 'none'; frame-ancestors
+  'none'; base-uri 'none'` — the strictest CSP possible for an
+  API. The API serves JSON; nothing it returns should ever execute
+  scripts or be embedded.
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+  — only emitted when the request was actually HTTPS (proxy header
+  `X-Forwarded-Proto: https` honoured). Browsers ignore HSTS on
+  plain HTTP anyway, but emitting it from a misconfigured proxy
+  could pin clients to the wrong scheme — better to be explicit.
+- `X-Content-Type-Options: nosniff` — kills MIME sniffing.
+- `X-Frame-Options: DENY` — older sibling of CSP frame-ancestors.
+- `Referrer-Policy: strict-origin-when-cross-origin` — browser
+  default since 2020, set explicitly so it can't drift.
+- `Permissions-Policy: camera=(), microphone=(), geolocation=(),
+  payment=(), usb=(), magnetometer=(), gyroscope=()` — disable
+  every browser capability the app doesn't use.
+
+**Frontend** (`apps/web/next.config.js`):
+- Adds `Content-Security-Policy` + `Strict-Transport-Security` to
+  the existing security-header set.
+- CSP is necessarily looser than the API's — Next inlines its
+  runtime bootstrap so `script-src` includes `'unsafe-inline'` and
+  `'unsafe-eval'` (the latter for dev HMR). Every other directive
+  is minimum-needed: `default-src 'self'`, `img-src 'self' data:
+  blob: https:` (IG thumbnails / CDN avatars), `connect-src 'self'
+  ${NEXT_PUBLIC_API_URL}`, `frame-ancestors 'none'`,
+  `base-uri 'self'`, `form-action 'self'`, `object-src 'none'`.
+- FOUND-ISSUES #9 documents the script-src tightening plan
+  (per-request nonce via Next middleware) — bounded refactor
+  deferred until we audit any inline 3rd-party scripts.
+
+**Tests** (`services/api/tests/test_security_headers.py`, 5 cases):
+- Health endpoint has every expected header (CSP, nosniff, frame
+  options, referrer, permissions with camera/mic/geo disabled).
+- Plain HTTP request has NO HSTS (avoiding pin-to-wrong-scheme).
+- HTTPS request (`X-Forwarded-Proto: https`) gets HSTS with
+  `max-age` + `includeSubDomains`.
+- CSRF 403 carries security headers (proves the middleware wraps
+  early-return responses).
+- Unauthenticated 401 carries security headers (auth dep also
+  short-circuits).
+
+## Phase 2 complete
+
+All six security tasks shipped on this branch:
+
+- 2.1 CSRF double-submit cookie — `004f062`
+- 2.2 Idempotency-Key middleware — `3b81e15`
+- 2.3 XSS sanitization (bleach + DOMPurify) — `ffd0f3a`
+- 2.4 Rotating refresh tokens + reuse detection — `ddb33ae`
+- 2.5 Strict CORS allowlist — `f0d5cac`
+- 2.6 CSP + security headers — _this commit_
+
+Plus Phase 1 (per-reference-page discovery + downloads + editor
+handoff). FOUND-ISSUES has the parked items (#1 worker-enhancer
+queue.publish, #2 dual reference-pages UI, #6 BackgroundTasks ->
+Celery, #7 worker exporter reference_reel_id, #8 frontend 401-retry
+discrimination, #9 frontend CSP nonces).
 - Worker exporter dispatch for reference_reel_id (FOUND-ISSUES #7)

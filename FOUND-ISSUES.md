@@ -127,3 +127,25 @@ expired" and "you tried to access something you don't own". A 401 from
 an ownership check will fire a pointless `/api/auth/refresh` call,
 masking the actual error from logs. Fine for now, worth tightening when
 Phase 2.4 lands.
+
+## 9. Frontend CSP still allows `'unsafe-inline'` + `'unsafe-eval'` in `script-src`
+
+`apps/web/next.config.js` ships a strict CSP for everything except
+`script-src`, which has to allow `'unsafe-inline'` because Next.js
+inlines its runtime bootstrap, and `'unsafe-eval'` because dev-mode
+HMR uses eval. This widens the XSS-payoff surface — a successful
+injection via any other vector could execute inline.
+
+The clean fix is a per-request nonce: Next.js 14 supports it via
+middleware that mints a nonce, stamps `<script nonce=...>` on every
+Next-emitted script tag, and adds `script-src 'self' 'nonce-...'` to
+the CSP header for that request. Implementation:
+
+- `apps/web/middleware.ts` returning a `NextResponse` with `Content-
+  Security-Policy` per request.
+- `apps/web/app/layout.tsx` reading the nonce from request headers
+  (Next gives you a server-side helper) and passing to `<Script>`.
+
+Defer until we have a stable inline-script audit — moving to nonces
+breaks any third-party script that doesn't carry the nonce, so we'd
+need to confirm we don't load Stripe / GA / etc. inline first.
