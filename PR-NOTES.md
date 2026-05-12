@@ -19,7 +19,7 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 | `3b81e15` | feat | Idempotency-Key middleware (Task 2.2) |
 | `ffd0f3a` | feat | XSS sanitization — bleach + DOMPurify (Task 2.3) |
 | `ddb33ae` | feat | rotating refresh tokens + reuse detection (Task 2.4) |
-| _pending_ | feat | strict CORS allowlist (Task 2.5) |
+| `f0d5cac` | feat | strict CORS allowlist (Task 2.5) |
 
 ## What's in this PR (so far)
 
