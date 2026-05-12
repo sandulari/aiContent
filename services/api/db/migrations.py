@@ -509,6 +509,13 @@ MIGRATION_STATEMENTS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family
     ON refresh_tokens(family_id)
     """,
+    # Was VARCHAR(30) — values like 'suggested_from_<ig_handle>' can
+    # exceed that and crash the deep-discovery worker mid-insert. TEXT
+    # removes the limit; column cardinality is tiny so no storage cost.
+    """
+    ALTER TABLE theme_pages
+    ALTER COLUMN discovered_via TYPE TEXT
+    """,
 ]
 
 

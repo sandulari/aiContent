@@ -22,7 +22,10 @@ export default function DiscoverPage() {
   const [loadingRecs, setLoadingRecs] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [sortBy, setSortBy] = useState<SortBy>("score");
-  const [minViews, setMinViews] = useState<number>(0);
+  // Default to 100K+ — sub-100K is not "viral" inspiration in practice,
+  // and showing them by default trains users to expect mediocre source
+  // material. "All" stays available as an explicit opt-in.
+  const [minViews, setMinViews] = useState<number>(100000);
   const [pageSize] = useState<number>(100);
   const [offset, setOffset] = useState<number>(0);
   const [hasMore, setHasMore] = useState<boolean>(true);
@@ -178,7 +181,7 @@ export default function DiscoverPage() {
             >
               {pages.map((p) => (
                 <option key={p.id} value={p.id}>
-                  @{p.ig_username} {p.page_type === "reference" ? "(ref)" : ""}
+                  @{p.ig_username} {p.page_type === "reference" ? "(ref)" : "(own)"}
                 </option>
               ))}
             </select>
