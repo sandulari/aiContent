@@ -1,13 +1,25 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from services.sanitizer import clean_text
 
 
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
     display_name: str = Field(..., min_length=1, max_length=100)
+
+    @field_validator("display_name")
+    @classmethod
+    def _strip_html(cls, v: str) -> str:
+        """Strip any HTML tags. ``display_name`` is plain-text only and
+        flows into HTML email templates — no markup allowed."""
+        cleaned = clean_text(v) or ""
+        if not cleaned:
+            raise ValueError("display_name must contain non-empty text")
+        return cleaned
 
 
 class UserLogin(BaseModel):

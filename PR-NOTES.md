@@ -17,6 +17,7 @@ Branch: `feat/student-workflow-and-hardening` off `main` @ `7c6b23c`.
 | `67dcfb8` | feat | editor handoff + scheduler tests (Task 1.7) |
 | `004f062` | feat | CSRF double-submit cookie (Task 2.1) |
 | `3b81e15` | feat | Idempotency-Key middleware (Task 2.2) |
+| _pending_ | feat | XSS sanitization — bleach + DOMPurify (Task 2.3) |
 
 ## What's in this PR (so far)
 
@@ -456,7 +457,58 @@ header exists. SSR-safe with a hex-string fallback.
 Tests use `fakeredis` injected via `idempotency._test_client` so the
 suite never needs a real Redis (same pattern as the rate limiter).
 
+### `feat: XSS sanitization — bleach + DOMPurify (Task 2.3)`
+
+Defense-in-depth against script injection in user-supplied strings.
+React's auto-escaping covers JSX text interpolation, but the app also
+interpolates `display_name` into HTML email templates (welcome,
+password reset) where there is no automatic escape — that's the real
+injection sink we close here.
+
+**Backend** (`services/api/services/sanitizer.py`):
+- `clean_text(s)` — `bleach.clean(..., tags=[], strip=True)` strips
+  every HTML tag and keeps the text content. Used in Pydantic field
+  validators so user input is sanitized on the way IN and the stored
+  row is plain text.
+- `escape_for_html(s)` — wraps `html.escape(s, quote=True)` for
+  defense-in-depth inside email templates. Pre-existing rows or
+  admin-set fields could carry raw HTML; escaping at the
+  interpolation point catches them.
+- `schemas/user.py:UserCreate.display_name` runs through `clean_text`
+  in a `@field_validator`. A display name that's entirely HTML tags
+  (e.g. `<img><br>`) becomes empty after strip and is rejected as a
+  validation error rather than stored.
+- `services/email_templates.py` interpolates every untrusted value
+  through `escape_for_html` (aliased as `e`). The reset_url is built
+  server-side from known parts but goes through `e()` too — no
+  string ever lands in HTML without escape.
+- `requirements.txt` gains `bleach==6.2.0`.
+
+**Frontend** (`apps/web/lib/sanitize.ts`):
+- `sanitizeHtml(s)` — wraps `isomorphic-dompurify` with an explicit
+  allow-list (`b/i/em/strong/a/p/br/ul/ol/li` + `href/title/rel/target`)
+  for any future `dangerouslySetInnerHTML` callsite. Strips
+  `<script>`, all `on*` handlers, `javascript:` URIs, and data: attrs.
+- `stripHtml(s)` — text-only fallback for non-React sinks
+  (clipboard, alert, log messages).
+- `package.json` adds `isomorphic-dompurify` so the helper works in
+  both SSR and CSR.
+- Today there are zero `dangerouslySetInnerHTML` usages, so this is
+  a library addition with no behaviour change at any current
+  callsite. The XSS hardening that happens today is on the backend.
+
+**Tests** (~14 cases):
+- `services/api/tests/test_sanitizer.py` — `clean_text` strips tags
+  (parametrised across 6 inputs); `UserCreate` strips `<script>`
+  from `display_name`; all-HTML display name -> ValidationError;
+  welcome + reset email templates HTML-escape both `display_name`
+  and `reset_url` (incl. `&` inside the URL).
+- `apps/web/__tests__/sanitize.test.ts` — `sanitizeHtml` strips
+  script tags / event handlers / `javascript:` URIs; preserves
+  allow-listed inline tags; returns "" for nullish. `stripHtml`
+  returns plain text only.
+
 ## Still pending (in this branch)
-- Phase 2 hardening (XSS, refresh-token reuse-detection, CORS
-  allowlist, CSP)
+- Phase 2 hardening (refresh-token reuse-detection, CORS allowlist,
+  CSP + security headers)
 - Worker exporter dispatch for reference_reel_id (FOUND-ISSUES #7)
