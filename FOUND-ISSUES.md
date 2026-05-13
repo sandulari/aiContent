@@ -13,26 +13,19 @@ picked up the new queue subscription.
 
 ## 2. Two "reference pages" surfaces in /settings will confuse users
 
-After Task 1.1, the Settings page renders both:
-- the legacy section that lists `user_pages` rows with `page_type='reference'`
-  (label: "Reference pages") — feeds the niche-based recommendation pipeline
-- the new section that lists `reference_pages` rows (label: "Reference pages
-  for discovery") — feeds the per-page discovery pipeline added in 1.3
+**RESOLVED in Round 7** — went with "migrate forward": Settings now
+has a single reference-pages section (the new `ReferencePagesPanel`
+backed by the `reference_pages` table). The legacy "Reference /
+inspiration" option in the "Connect a page" dropdown was removed —
+Settings only adds 'own' pages now. Onboarding also switched to
+`/api/reference-pages` so new students never write to the legacy
+location.
 
-This is on purpose for Task 1.1 ("build alongside, new tables") so the
-legacy flow stays untouched. But long-term we should pick one. Candidates:
-
-- **Migrate forward**: write a one-shot migration that copies every
-  `user_pages` row with `page_type='reference'` into `reference_pages`
-  and stop using `page_type='reference'` for new writes. Drop the legacy
-  section from /settings.
-- **Migrate backward**: kill `reference_pages`, fold the per-page
-  discovery into the existing `user_pages` row with a new column. More
-  churn, no clear win.
-- **Keep both**: ship a labelling pass so users understand the difference,
-  document in /onboarding.
-
-Defer to after Phase 1 is complete and we have user data to inform the call.
+Existing legacy rows in `user_pages` with `page_type='reference'`
+are left alone (no migration). They still appear in the dropdown
+filter on `/discover` (legacy niche pool), but cannot be edited from
+Settings. If a student wants those refs in `/sources` they re-add via
+the new panel — small cost for a clean cutover.
 
 ## 3. Access token default of 60 minutes vs Phase 2.4 spec of 15
 
@@ -93,11 +86,12 @@ so skipping the video_files row doesn't break any user-visible flow.
 
 ## 8. `apps/web/lib/api.ts` token refresh treats _every_ 401 as a refresh trigger
 
-The retry-on-401 logic doesn't distinguish between "your access token
-expired" and "you tried to access something you don't own". A 401 from
-an ownership check will fire a pointless `/api/auth/refresh` call,
-masking the actual error from logs. Fine for now, worth tightening when
-Phase 2.4 lands.
+**RESOLVED in Round 7** — the retry only fires now when the 401's
+detail body explicitly mentions "expired" (matches both the
+``"Token expired"`` string and the structured
+``{code: refresh_token_expired}`` shape). Other 401s — missing
+cookie, invalid token, ownership 401s — surface directly instead
+of triggering a pointless `/refresh`.
 
 ## 9. Frontend CSP still allows `'unsafe-inline'` + `'unsafe-eval'` in `script-src`
 
