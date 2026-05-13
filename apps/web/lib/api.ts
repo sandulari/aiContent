@@ -457,18 +457,35 @@ async function req<T>(endpoint: string, opts: FetchOpts = {}): Promise<T> {
   try {
     return await _doFetch<T>(url, init, headers);
   } catch (e) {
-    // On 401, try refreshing the token once and retry
+    // On 401, try refreshing the token once and retry — but ONLY if
+    // the 401 actually means "access token expired". Other 401s
+    // (missing cookie, invalid token, ownership check) won't be
+    // fixed by a refresh, so firing /api/auth/refresh for them just
+    // pollutes the logs and obscures the real error.
     if (e instanceof ApiError && e.status === 401 && !endpoint.includes("/auth/")) {
-      if (!_refreshing) {
-        _refreshing = fetch(`${API_BASE}/api/auth/refresh`, { method: "POST", credentials: "include" })
-          .then((r) => { if (!r.ok) throw new Error("refresh failed"); })
-          .finally(() => { _refreshing = null; });
-      }
-      try {
-        await _refreshing;
-        return await _doFetch<T>(url, init, headers);
-      } catch {
-        throw e; // refresh failed — throw original 401
+      // FastAPI's HTTPException(detail=...) lands in body.detail as
+      // either a string ("Token expired") or an object with a code.
+      // Match both shapes; default to "no retry" when in doubt.
+      const detail = (e.body as any)?.detail;
+      const detailStr = typeof detail === "string"
+        ? detail
+        : typeof detail === "object" && detail !== null
+          ? `${detail.code || ""} ${detail.detail || ""}`
+          : "";
+      const isExpiredAccessToken = /expired/i.test(detailStr);
+
+      if (isExpiredAccessToken) {
+        if (!_refreshing) {
+          _refreshing = fetch(`${API_BASE}/api/auth/refresh`, { method: "POST", credentials: "include" })
+            .then((r) => { if (!r.ok) throw new Error("refresh failed"); })
+            .finally(() => { _refreshing = null; });
+        }
+        try {
+          await _refreshing;
+          return await _doFetch<T>(url, init, headers);
+        } catch {
+          throw e; // refresh failed — surface the original 401
+        }
       }
     }
     throw e;
