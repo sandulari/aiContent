@@ -7,14 +7,15 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Loading } from "@/components/shared/loading";
 import { SkeletonSettings } from "@/components/shared/skeleton";
-import { api, UserPage, PageType } from "@/lib/api";
+import { api, UserPage } from "@/lib/api";
 import { ReferencePagesPanel } from "@/components/settings/referencePagesPanel";
 import { DiscoveryFilterPanel } from "@/components/settings/discoveryFilterPanel";
 
 export default function SettingsPage() {
   const [pages, setPages] = useState<UserPage[]>([]);
   const [newUsername, setNewUsername] = useState("");
-  const [newType, setNewType] = useState<PageType>("own");
+  // Settings only adds 'own' pages now — reference pages have their
+  // own dedicated panel below.
   const [adding, setAdding] = useState(false);
   const [loading, setLoading] = useState(true);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -43,7 +44,7 @@ export default function SettingsPage() {
     setError(null);
     try {
       const clean = newUsername.trim().replace(/^@/, "").replace(/^https?:\/\/(www\.)?instagram\.com\//, "").replace(/\/$/, "");
-      const p = await api.myPages.add(clean, newType);
+      const p = await api.myPages.add(clean, "own");
       setPages((prev) => [p, ...prev]);
       setNewUsername("");
     } catch (e: any) {
@@ -78,7 +79,6 @@ export default function SettingsPage() {
   if (loading) return <SkeletonSettings />;
 
   const ownPages = pages.filter((p) => p.page_type === "own");
-  const refPages = pages.filter((p) => p.page_type === "reference");
 
   return (
     <div className="p-8 max-w-3xl mx-auto space-y-8">
@@ -106,22 +106,21 @@ export default function SettingsPage() {
         </Card>
       </div>
 
-      {/* Add page form */}
+      {/* Add page form — own pages only. Reference pages live in the
+          dedicated panel below (ReferencePagesPanel) which writes to the
+          new reference_pages table feeding /sources. The legacy "reference"
+          option in this UI wrote to user_pages with page_type='reference'
+          which never appeared in /sources, only in the niche-pool
+          /discover view. Pre-merge it was the only option; post-merge
+          having both was actively confusing — student would add a ref
+          page here and wonder why it didn't show up in /sources. */}
       <div>
-        <h2 className="text-sm font-medium text-[#e6edf3] mb-3">Connect a page</h2>
+        <h2 className="text-sm font-medium text-[#e6edf3] mb-3">Connect your own page</h2>
         <Card>
           <div className="space-y-3">
             <div className="flex gap-2">
-              <select
-                value={newType}
-                onChange={(e) => setNewType(e.target.value as PageType)}
-                className="h-10 px-3 text-sm bg-[#0d1117] text-[#e6edf3] border border-[#21262d] rounded-lg focus:outline-none focus:border-[#58a6ff]"
-              >
-                <option value="own">My own page</option>
-                <option value="reference">Reference / inspiration</option>
-              </select>
               <Input
-                placeholder="Instagram username (e.g. natgeo)"
+                placeholder="Your Instagram username (e.g. yourbrand)"
                 value={newUsername}
                 onChange={(e) => setNewUsername(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleAdd()}
@@ -130,9 +129,9 @@ export default function SettingsPage() {
               <Button onClick={handleAdd} loading={adding}>Connect</Button>
             </div>
             <p className="text-[11px] text-[#484f58] leading-relaxed">
-              <span className="text-[#7d8590] font-medium">My own page</span> unlocks the weekly growth dashboard.{" "}
-              <span className="text-[#7d8590] font-medium">Reference</span> pages feed the similar-content engine — we surface 100+
-              reels with 500K+ views based on what they post.
+              Your own page unlocks the weekly growth dashboard and the
+              niche-based recommendation feed. To add <span className="text-[#7d8590] font-medium">reference pages</span> for inspiration content,
+              scroll down to the dedicated section.
             </p>
             {error && <p className="text-xs text-[#f85149]">{error}</p>}
           </div>
@@ -171,36 +170,11 @@ export default function SettingsPage() {
         </Card>
       </div>
 
-      {/* Reference pages */}
-      <div>
-        <h2 className="text-sm font-medium text-[#e6edf3] mb-3">
-          Reference pages
-          <span className="ml-2 text-xs text-[#484f58]">({refPages.length})</span>
-        </h2>
-        <Card>
-          {refPages.length === 0 ? (
-            <p className="text-xs text-[#484f58] py-4 text-center">
-              Add pages whose content style you want to emulate. We'll analyze their reels and surface 100+ similar 500K+ view reels.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {refPages.map((p) => (
-                <div key={p.id} className="flex items-center justify-between p-3 bg-[#0d1117] rounded-lg">
-                  <div>
-                    <span className="text-sm font-medium text-[#e6edf3]">@{p.ig_username}</span>
-                    {p.niche && <span className="ml-2 text-xs text-[#484f58]">{p.niche}</span>}
-                  </div>
-                  <Button size="sm" variant="danger" onClick={() => handleRemove(p.id)} loading={removingId === p.id}>
-                    Remove
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
-
-      {/* Reference pages for the per-page discovery pipeline (Task 1.1). */}
+      {/* Reference pages live in the new reference_pages table now —
+          the legacy section that filtered user_pages by page_type='reference'
+          is gone (FOUND-ISSUES #2). One source of truth for reference
+          pages avoids the "added it in Settings, can't see it in /sources"
+          confusion. */}
       <ReferencePagesPanel />
 
       {/* Discovery filter config (Task 1.2). */}

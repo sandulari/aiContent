@@ -135,16 +135,27 @@ export default function OnboardingPage() {
 
     setAddingRef(true);
     try {
-      const page = await api.myPages.add(clean, "reference");
+      // Reference pages go into the NEW reference_pages table feeding
+      // the per-reference-page discovery pipeline at /sources.
+      // (Was api.myPages.add(clean, "reference") — that wrote to the
+      // legacy user_pages with page_type='reference', which fed the
+      // niche-pool /discover view but did NOT populate /sources. As
+      // a result every student finished onboarding with an empty
+      // /sources page and had to manually re-add every handle in
+      // Settings.)
+      const page = await api.referencePages.add(clean);
       setReferencePages((prev) => [...prev, { username: clean, id: page.id }]);
       setRefInput("");
     } catch (err: any) {
-      if (err?.message?.includes("already")) {
-        // Already connected — just add to local list
+      const msg = err?.message || "";
+      if (msg.toLowerCase().includes("already") || err?.status === 200) {
+        // Idempotent re-add — already in list. Reflect locally.
         setReferencePages((prev) => [...prev, { username: clean }]);
         setRefInput("");
+      } else if (err?.body?.detail?.code === "max_reference_pages") {
+        setError("You've already added the maximum of 5 reference pages.");
       } else {
-        setError(err?.message || "Failed to add page");
+        setError(msg || "Failed to add reference page");
       }
     } finally {
       setAddingRef(false);
@@ -154,29 +165,51 @@ export default function OnboardingPage() {
   const handleRemoveRef = (username: string) => {
     const ref = referencePages.find((r) => r.username === username);
     if (ref?.id) {
-      api.myPages.remove(ref.id).catch(() => {});
+      // Reference pages live in the new table now; use the matching
+      // delete endpoint instead of the legacy /api/my-pages remove.
+      api.referencePages.remove(ref.id).catch(() => {});
     }
     setReferencePages((prev) => prev.filter((r) => r.username !== username));
+  };
+
+  // Triggers BOTH discovery pipelines after onboarding:
+  // - Legacy niche-pool discovery for the student's own page (feeds
+  //   the existing /discover view of globally viral reels in their niche)
+  // - New per-reference-page discovery (feeds /sources with reels
+  //   FROM the student's chosen reference pages)
+  // Both are fire-and-forget — failures don't block the redirect.
+  const _triggerBothDiscoveryPipelines = async () => {
+    if (ownPageId) {
+      try {
+        await api.myPages.triggerDiscovery(ownPageId);
+      } catch (err) {
+        console.warn("Legacy niche-discovery trigger failed:", err);
+      }
+    }
+    // Only fires if the student added at least one reference page —
+    // the per-ref refresh has nothing to do otherwise.
+    if (referencePages.length > 0) {
+      try {
+        await api.discovery.refresh();
+      } catch (err) {
+        console.warn("Per-reference-page discovery refresh failed:", err);
+      }
+    }
   };
 
   const handleReferencesNext = async () => {
     setPhase("analyzing");
     setStepIndex(0);
 
-    // Trigger deep discovery pipeline in background
-    if (ownPageId) {
-      try {
-        await api.myPages.triggerDiscovery(ownPageId);
-      } catch (err) {
-        // Non-blocking — pipeline runs async, don't stop onboarding
-        console.warn("Discovery trigger failed:", err);
-      }
-    }
+    await _triggerBothDiscoveryPipelines();
 
-    // Wait for animation, then redirect to discover page
+    // Land students on /sources if they added reference pages (their
+    // expectation: "I added these pages, show me their reels"), else
+    // /discover for the niche-pool fallback.
+    const dest = referencePages.length > 0 ? "/sources" : "/discover";
     setTimeout(() => {
       setPhase("done");
-      setTimeout(() => router.push("/discover"), 1500);
+      setTimeout(() => router.push(dest), 1500);
     }, ANALYZING_STEPS.length * 2500 + 1000);
   };
 
@@ -184,17 +217,12 @@ export default function OnboardingPage() {
     setPhase("analyzing");
     setStepIndex(0);
 
-    // Still trigger discovery even without references (will use fallback)
-    if (ownPageId) {
-      try {
-        await api.myPages.triggerDiscovery(ownPageId);
-      } catch (err) {
-        console.warn("Discovery trigger failed:", err);
-      }
-    }
+    await _triggerBothDiscoveryPipelines();
 
     setTimeout(() => {
       setPhase("done");
+      // No reference pages added → /sources would be empty, so fall
+      // back to the niche-pool /discover.
       setTimeout(() => router.push("/discover"), 1500);
     }, ANALYZING_STEPS.length * 2500 + 1000);
   };
