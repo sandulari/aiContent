@@ -65,6 +65,7 @@ class RapidAPIErrorKind(str, Enum):
     NOT_FOUND = "not_found"        # handle doesn't exist on IG (404)
     UPSTREAM_ERROR = "upstream"    # any 5xx or unexpected transport failure
     MALFORMED = "malformed"        # 200 but the body isn't what we expected
+    SUBSCRIPTION = "subscription"  # 401/403 — RapidAPI subscription inactive/over-quota
 
 
 class RapidAPIError(Exception):
@@ -303,9 +304,89 @@ def _classify_status(status: int) -> RapidAPIErrorKind | None:
         return RapidAPIErrorKind.NOT_FOUND
     if status == 429:
         return RapidAPIErrorKind.RATE_LIMIT
+    if status in (401, 403):
+        # RapidAPI returns 401/403 with body "You are not subscribed to this
+        # API" when the key's subscription is inactive or over the monthly
+        # quota. Not transient — UI should surface this distinctly so the
+        # admin knows to re-subscribe rather than retrying forever.
+        return RapidAPIErrorKind.SUBSCRIPTION
     if status >= 500:
         return RapidAPIErrorKind.UPSTREAM_ERROR
     return RapidAPIErrorKind.UPSTREAM_ERROR
+
+
+# Kinds where a retry is worth attempting. SUBSCRIPTION/NOT_FOUND/MALFORMED
+# won't fix themselves on the next call; retrying just burns quota.
+_RETRYABLE_KINDS = frozenset({
+    RapidAPIErrorKind.TIMEOUT,
+    RapidAPIErrorKind.RATE_LIMIT,
+    RapidAPIErrorKind.UPSTREAM_ERROR,
+})
+
+
+def _retry_config() -> tuple[int, float]:
+    """Re-read each call so tests can monkeypatch the env without restart."""
+    try:
+        attempts = int(os.getenv("RAPIDAPI_RETRY_ATTEMPTS", "3"))
+    except ValueError:
+        attempts = 3
+    try:
+        delay = float(os.getenv("RAPIDAPI_RETRY_BASE_DELAY", "0.8"))
+    except ValueError:
+        delay = 0.8
+    return max(1, attempts), max(0.0, delay)
+
+
+async def _request_with_retry(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    params: dict[str, str],
+    phase: str,
+    handle: str,
+) -> httpx.Response:
+    """GET with retry+backoff on transient classes (timeout/429/5xx).
+
+    Returns the last response so the caller can keep its existing
+    json-parse + classify logic. If every attempt failed transport-side,
+    raises the last :class:`RapidAPIError`.
+    """
+    import asyncio
+    import random
+
+    max_attempts, base_delay = _retry_config()
+    last_exc: RapidAPIError | None = None
+    for attempt in range(max_attempts):
+        try:
+            resp = await client.get(url, params=params)
+        except httpx.TimeoutException as exc:
+            last_exc = RapidAPIError(
+                RapidAPIErrorKind.TIMEOUT, f"{phase} fetch timed out"
+            )
+            last_exc.__cause__ = exc
+        except httpx.RequestError as exc:
+            last_exc = RapidAPIError(
+                RapidAPIErrorKind.UPSTREAM_ERROR, f"{phase} fetch: {exc}"
+            )
+            last_exc.__cause__ = exc
+        else:
+            # Successful transport call — decide if we should retry on status.
+            kind = _classify_status(resp.status_code)
+            if kind is None or kind not in _RETRYABLE_KINDS:
+                return resp
+            last_exc = RapidAPIError(
+                kind,
+                f"{phase} HTTP {resp.status_code} for @{handle}",
+                resp.status_code,
+            )
+
+        if attempt < max_attempts - 1:
+            # Exponential backoff + jitter. 0.8, 1.6, 3.2s plus 0-50% jitter.
+            delay = base_delay * (2 ** attempt) * (1 + random.random() * 0.5)
+            await asyncio.sleep(delay)
+
+    assert last_exc is not None  # always set when loop exits without return
+    raise last_exc
 
 
 async def fetch_handle_reels(
@@ -337,18 +418,13 @@ async def fetch_handle_reels(
         headers=_headers(),
     ) as client:
         # ── Resolve handle -> user_id ────────────────────────────────
-        try:
-            resp = await client.get(
-                f"{_BASE_URL}/profile", params={"username": handle}
-            )
-        except httpx.TimeoutException as exc:
-            raise RapidAPIError(
-                RapidAPIErrorKind.TIMEOUT, "profile fetch timed out"
-            ) from exc
-        except httpx.RequestError as exc:
-            raise RapidAPIError(
-                RapidAPIErrorKind.UPSTREAM_ERROR, f"profile fetch: {exc}"
-            ) from exc
+        resp = await _request_with_retry(
+            client,
+            f"{_BASE_URL}/profile",
+            params={"username": handle},
+            phase="profile fetch",
+            handle=handle,
+        )
 
         err = _classify_status(resp.status_code)
         if err is not None:
@@ -380,16 +456,13 @@ async def fetch_handle_reels(
             if max_id:
                 params["max_id"] = max_id
 
-            try:
-                rr = await client.get(f"{_BASE_URL}/reels", params=params)
-            except httpx.TimeoutException as exc:
-                raise RapidAPIError(
-                    RapidAPIErrorKind.TIMEOUT, "reels fetch timed out"
-                ) from exc
-            except httpx.RequestError as exc:
-                raise RapidAPIError(
-                    RapidAPIErrorKind.UPSTREAM_ERROR, f"reels fetch: {exc}"
-                ) from exc
+            rr = await _request_with_retry(
+                client,
+                f"{_BASE_URL}/reels",
+                params=params,
+                phase="reels fetch",
+                handle=handle,
+            )
 
             err = _classify_status(rr.status_code)
             if err is RapidAPIErrorKind.NOT_FOUND:

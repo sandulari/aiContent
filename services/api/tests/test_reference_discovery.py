@@ -314,6 +314,10 @@ def _reels_payload(items: list[dict]) -> dict:
 @pytest.fixture(autouse=True)
 def _stub_rapidapi_key(monkeypatch):
     monkeypatch.setenv("RAPIDAPI_KEY", "test-key")
+    # Make retry-backoff a no-op for the test suite so the 429/5xx tests
+    # finish in milliseconds instead of seconds.
+    monkeypatch.setenv("RAPIDAPI_RETRY_ATTEMPTS", "1")
+    monkeypatch.setenv("RAPIDAPI_RETRY_BASE_DELAY", "0")
 
 
 class TestFetchHandleReels:
@@ -368,6 +372,8 @@ class TestFetchHandleReels:
     @pytest.mark.parametrize(
         "status,expected_kind",
         [
+            (401, RapidAPIErrorKind.SUBSCRIPTION),
+            (403, RapidAPIErrorKind.SUBSCRIPTION),
             (404, RapidAPIErrorKind.NOT_FOUND),
             (429, RapidAPIErrorKind.RATE_LIMIT),
             (500, RapidAPIErrorKind.UPSTREAM_ERROR),
@@ -434,6 +440,52 @@ class TestFetchHandleReels:
         with pytest.raises(RapidAPIError) as exc:
             await fetch_handle_reels("x")
         assert exc.value.kind is RapidAPIErrorKind.UPSTREAM_ERROR
+
+    async def test_retry_recovers_from_transient_429(self, monkeypatch):
+        """First 429 should be retried; second-attempt 200 wins. Proves the
+        retry-with-backoff path turns a transient quota blip into success
+        instead of bubbling RATE_LIMIT to the caller."""
+        monkeypatch.setenv("RAPIDAPI_RETRY_ATTEMPTS", "3")
+        monkeypatch.setenv("RAPIDAPI_RETRY_BASE_DELAY", "0")
+
+        attempts = {"profile": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "/profile" in request.url.path:
+                attempts["profile"] += 1
+                if attempts["profile"] == 1:
+                    return httpx.Response(429)
+                return httpx.Response(200, json={"pk": "1"})
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "items": [{"media": {"pk": "m", "code": "Cok"}}],
+                        "paging_info": {"max_id": ""},
+                    }
+                },
+            )
+
+        items = await fetch_handle_reels("x", transport=_mock_transport(handler))
+        assert len(items) == 1
+        assert attempts["profile"] == 2  # Retried once before succeeding.
+
+    async def test_subscription_failures_are_not_retried(self, monkeypatch):
+        """A 403 ``not subscribed`` is a billing state, not a transient — the
+        retry loop should give up immediately so we don't burn quota."""
+        monkeypatch.setenv("RAPIDAPI_RETRY_ATTEMPTS", "3")
+        monkeypatch.setenv("RAPIDAPI_RETRY_BASE_DELAY", "0")
+
+        attempts = {"profile": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            attempts["profile"] += 1
+            return httpx.Response(403, json={"message": "You are not subscribed"})
+
+        with pytest.raises(RapidAPIError) as exc:
+            await fetch_handle_reels("x", transport=_mock_transport(handler))
+        assert exc.value.kind is RapidAPIErrorKind.SUBSCRIPTION
+        assert attempts["profile"] == 1  # No retry on subscription failures.
 
     async def test_paginates_until_no_max_id(self):
         call_count = {"reels": 0}

@@ -377,6 +377,34 @@ export interface DiscoveryRefreshResponse {
   queued: boolean;
   page_count: number;
   detail?: string;
+  run_id?: string;
+}
+
+export type DiscoveryRunStatus =
+  | "queued"
+  | "running"
+  | "done"
+  | "partial"
+  | "failed";
+
+export type DiscoveryRunErrorKind =
+  | "subscription"
+  | "rate_limit"
+  | "timeout"
+  | "upstream"
+  | "malformed"
+  | "not_found";
+
+export interface DiscoveryRunState {
+  run_id: string | null;
+  status: DiscoveryRunStatus | null;
+  started_at: string | null;
+  finished_at: string | null;
+  page_count: number;
+  refreshed: number;
+  failed_handles: string[];
+  error_kind: DiscoveryRunErrorKind | null;
+  error_detail: string | null;
 }
 
 // ── Fetch ────────────────────────────────────────────────────────────────
@@ -738,6 +766,9 @@ export const api = {
     },
     refresh() {
       return req<DiscoveryRefreshResponse>("/api/discovery/refresh", { method: "POST" });
+    },
+    refreshStatus() {
+      return req<DiscoveryRunState>("/api/discovery/refresh-status");
     },
     download(reelId: string) {
       return req<Download>(`/api/discovery/items/${reelId}/download`, { method: "POST" });

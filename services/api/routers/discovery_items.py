@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Iterable
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,6 +40,14 @@ from models.user_export import UserExport
 from models.user_page import UserPage
 from models.user_template import UserTemplate
 from services.discovery_download import perform_download
+from services.discovery_runs import (
+    DiscoveryRun,
+    new_run_id,
+    read as read_run,
+    write_finished,
+    write_queued,
+    write_running,
+)
 from services.offsite_search import (
     TikTokSearchError,
     build_query_from_caption,
@@ -49,6 +57,7 @@ from services.rate_limiter import RateLimitExceeded, check_and_bump
 from services.reference_discovery import (
     DiscoveryItem,
     RapidAPIError,
+    RapidAPIErrorKind,
     apply_filter,
     fetch_handle_reels,
     rank_items,
@@ -212,8 +221,61 @@ async def trigger_refresh(
             "detail": "No reference pages to refresh — add one first.",
         }
 
-    background.add_task(refresh_pages_background, pages)
-    return {"queued": True, "page_count": len(pages)}
+    run_id = new_run_id()
+    await write_queued(current_user.id, run_id=run_id, page_count=len(pages))
+    background.add_task(
+        refresh_pages_background, pages, str(current_user.id), run_id
+    )
+    return {"queued": True, "page_count": len(pages), "run_id": run_id}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/discovery/refresh-status — UI polls this after firing /refresh
+#  so it can show real outcome (success / partial / subscription-down) instead
+#  of a silent zero-state. Returns 404 only when no refresh has *ever* run.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/refresh-status")
+async def get_refresh_status(
+    current_user: User = Depends(get_current_user),
+):
+    """Latest refresh state for the caller.
+
+    Shape: ``{run_id, status, started_at, finished_at, page_count,
+    refreshed, failed_handles, error_kind, error_detail}``. Status is one
+    of ``queued | running | done | partial | failed``. The UI polls until
+    it lands in a terminal state (done/partial/failed) and renders the
+    matching message — quota/subscription failures get a distinct call
+    to action instead of a generic empty grid.
+    """
+    run = await read_run(current_user.id)
+    if run is None:
+        # Match the convention of GET /items: no refresh ever recorded
+        # is a valid state, not an error. Frontend treats this as
+        # "click Refresh to populate".
+        return {
+            "run_id": None,
+            "status": None,
+            "started_at": None,
+            "finished_at": None,
+            "page_count": 0,
+            "refreshed": 0,
+            "failed_handles": [],
+            "error_kind": None,
+            "error_detail": None,
+        }
+    return {
+        "run_id": run.run_id,
+        "status": run.status,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "page_count": run.page_count,
+        "refreshed": run.refreshed,
+        "failed_handles": run.failed_handles,
+        "error_kind": run.error_kind,
+        "error_detail": run.error_detail,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -230,14 +292,21 @@ async def do_refresh(
     db: AsyncSession,
 ) -> dict:
     """Inner refresh — fetch each (page_id, handle) via RapidAPI and upsert
-    into ``reference_reels`` using the caller's session. Returns a small
-    summary. Does NOT commit; the wrapper or test controls that.
+    into ``reference_reels`` using the caller's session. Returns a summary
+    with the per-handle failure breakdown so the wrapper can persist it to
+    Redis for the UI to poll. Does NOT commit; the wrapper or test
+    controls that.
 
     Errors on one page do NOT halt the rest. The caller already received
     its 202 — partial success beats whole-batch failure.
+
+    ``failures`` (kind ranked priority for the UI's single error message):
+    subscription > rate_limit > timeout > upstream > malformed > not_found.
     """
     refreshed = 0
     failed_handles: list[str] = []
+    failure_kinds: list[str] = []
+    last_detail: str | None = None
 
     for page_id, handle in pages:
         try:
@@ -248,10 +317,14 @@ async def do_refresh(
                 exc.kind.value, handle, exc.status_code,
             )
             failed_handles.append(handle)
+            failure_kinds.append(exc.kind.value)
+            last_detail = str(exc)
             continue
-        except Exception:  # noqa: BLE001 — log + continue, never crash worker
+        except Exception as exc:  # noqa: BLE001 — log + continue, never crash worker
             logger.exception("Discovery refresh: unexpected error on @%s", handle)
             failed_handles.append(handle)
+            failure_kinds.append("upstream")
+            last_detail = str(exc)
             continue
 
         for r in reels:
@@ -291,18 +364,78 @@ async def do_refresh(
             await db.execute(stmt)
             refreshed += 1
 
-    return {"refreshed": refreshed, "failed_handles": failed_handles}
+    # Pick the worst failure kind so the UI shows the most actionable
+    # message. Subscription beats rate_limit beats everything else.
+    _PRIORITY = ["subscription", "rate_limit", "timeout", "upstream", "malformed", "not_found"]
+    dominant_kind: str | None = None
+    for kind in _PRIORITY:
+        if kind in failure_kinds:
+            dominant_kind = kind
+            break
+
+    return {
+        "refreshed": refreshed,
+        "failed_handles": failed_handles,
+        "error_kind": dominant_kind,
+        "error_detail": last_detail if dominant_kind else None,
+    }
 
 
-async def refresh_pages_background(pages: Iterable[tuple[UUID, str]]) -> dict:
+async def refresh_pages_background(
+    pages: Iterable[tuple[UUID, str]],
+    user_id: str | None = None,
+    run_id: str | None = None,
+) -> dict:
     """Production wrapper — opens a fresh async session, runs the refresh,
-    commits. Invoked by FastAPI BackgroundTasks; safe to call directly
-    from other coroutines too.
+    commits. When ``user_id``/``run_id`` are provided (the normal API path)
+    also publishes lifecycle state to Redis so the UI can poll for the
+    outcome. The legacy 2-arg shape is preserved so existing tests + any
+    direct callers keep working.
     """
+    materialized_pages = list(pages)
+    if user_id and run_id:
+        # Tell the UI we've picked it up. Failures here must not stop the
+        # actual refresh — Redis being unreachable is a downgrade, not a
+        # blocker for populating reels.
+        try:
+            await write_running(user_id, run_id=run_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("discovery_runs.write_running failed")
+
     async with async_session() as db:
-        result = await do_refresh(pages, db)
-        await db.commit()
-        return result
+        try:
+            result = await do_refresh(materialized_pages, db)
+            await db.commit()
+        except Exception as exc:  # noqa: BLE001 — log + persist failed state
+            logger.exception("Discovery refresh wrapper failed")
+            if user_id and run_id:
+                try:
+                    await write_finished(
+                        user_id,
+                        run_id=run_id,
+                        refreshed=0,
+                        failed_handles=[h for _, h in materialized_pages],
+                        error_kind="upstream",
+                        error_detail=str(exc),
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("discovery_runs.write_finished failed")
+            raise
+
+    if user_id and run_id:
+        try:
+            await write_finished(
+                user_id,
+                run_id=run_id,
+                refreshed=result["refreshed"],
+                failed_handles=result["failed_handles"],
+                error_kind=result.get("error_kind"),
+                error_detail=result.get("error_detail"),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("discovery_runs.write_finished failed")
+
+    return result
 
 
 # ---------------------------------------------------------------------------

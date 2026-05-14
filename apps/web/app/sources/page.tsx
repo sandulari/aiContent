@@ -11,13 +11,38 @@ import {
   ApiError,
   api,
   type DiscoveryItem,
+  type DiscoveryRunErrorKind,
+  type DiscoveryRunState,
   type Download,
   type DownloadStatus,
   type SimilarResponse,
 } from "@/lib/api";
 
-const REFRESH_REFETCH_MS = 6000;
+const REFRESH_POLL_MS = 2500;
+const REFRESH_POLL_MAX_ATTEMPTS = 48; // ~2 min ceiling
 const DOWNLOAD_POLL_MS = 3000;
+
+function refreshErrorMessage(
+  kind: DiscoveryRunErrorKind | null,
+  failedCount: number,
+): string {
+  // Kept short — the surface is a single line under the refresh button.
+  switch (kind) {
+    case "subscription":
+      return "RapidAPI subscription is inactive or over quota — please contact support.";
+    case "rate_limit":
+      return "RapidAPI quota exhausted for this hour. Try again later.";
+    case "timeout":
+      return `RapidAPI timed out on ${failedCount} handle${failedCount === 1 ? "" : "s"}. Retry usually fixes this.`;
+    case "upstream":
+      return `RapidAPI upstream error on ${failedCount} handle${failedCount === 1 ? "" : "s"}.`;
+    case "malformed":
+    case "not_found":
+      return `Couldn't read ${failedCount} handle${failedCount === 1 ? "" : "s"} — they may have been renamed or set to private.`;
+    default:
+      return "Refresh failed — please try again.";
+  }
+}
 
 function isTerminalStatus(s: DownloadStatus): boolean {
   return s === "done" || s === "failed";
@@ -72,16 +97,55 @@ export default function SourcesPage() {
     loadItems();
   }, [loadItems]);
 
-  // Auto-refetch after a refresh kicks off so the grid catches up to the
-  // BackgroundTask without forcing a manual reload.
-  useEffect(() => {
-    if (!refreshNote?.startsWith("Refresh queued")) return;
-    const t = setTimeout(() => {
-      loadItems();
-      setRefreshNote(null);
-    }, REFRESH_REFETCH_MS);
-    return () => clearTimeout(t);
-  }, [refreshNote, loadItems]);
+  // Poll refresh-status until the BackgroundTask reaches a terminal state.
+  // The previous 6s-and-pray loop hid real failure modes (e.g. RapidAPI
+  // subscription exhausted) behind an "items: []" empty state. Now we keep
+  // ``refreshNote`` live until the server reports done|partial|failed.
+  const pollRefreshState = useCallback(
+    async (runId: string) => {
+      for (let i = 0; i < REFRESH_POLL_MAX_ATTEMPTS; i++) {
+        await new Promise((res) => setTimeout(res, REFRESH_POLL_MS));
+        let state: DiscoveryRunState;
+        try {
+          state = await api.discovery.refreshStatus();
+        } catch {
+          continue; // transient — keep polling
+        }
+        // A newer refresh races us — bail; the newer poll will update the UI.
+        if (state.run_id && state.run_id !== runId) return;
+        if (state.status === "done") {
+          await loadItems();
+          setRefreshNote(`Refreshed ${state.refreshed.toLocaleString()} reels.`);
+          setRefreshing(false);
+          return;
+        }
+        if (state.status === "partial") {
+          await loadItems();
+          const msg = refreshErrorMessage(
+            state.error_kind,
+            state.failed_handles.length,
+          );
+          setRefreshNote(
+            `Refreshed ${state.refreshed.toLocaleString()} reels. ${msg}`,
+          );
+          setRefreshing(false);
+          return;
+        }
+        if (state.status === "failed") {
+          setRefreshNote(
+            refreshErrorMessage(state.error_kind, state.failed_handles.length),
+          );
+          setRefreshing(false);
+          return;
+        }
+        // queued | running -> keep polling
+      }
+      // Polling timed out — leave the message in place but stop the spinner.
+      setRefreshNote("Refresh is taking longer than usual. Try again in a moment.");
+      setRefreshing(false);
+    },
+    [loadItems],
+  );
 
   const handleToggleSelect = useCallback((permalink: string) => {
     setSelected((prev) => {
@@ -187,9 +251,21 @@ export default function SourcesPage() {
       const r = await api.discovery.refresh();
       if (!r.queued) {
         setRefreshNote(r.detail ?? "Nothing to refresh.");
-      } else {
-        setRefreshNote(`Refresh queued for ${r.page_count} pages…`);
+        setRefreshing(false);
+        return;
       }
+      setRefreshNote(`Refreshing ${r.page_count} page${r.page_count === 1 ? "" : "s"}…`);
+      if (r.run_id) {
+        // Spinner stays on inside the polling loop until terminal state.
+        pollRefreshState(r.run_id);
+        return;
+      }
+      // Server didn't return a run_id (older deploy?) — fall back to a
+      // single reload after a short delay so the UI still updates.
+      setTimeout(() => {
+        loadItems();
+        setRefreshing(false);
+      }, 6000);
     } catch (e) {
       if (e instanceof ApiError && e.status === 429) {
         const retry =
@@ -201,9 +277,9 @@ export default function SourcesPage() {
           e instanceof Error ? e.message : "Refresh failed.",
         );
       }
+      setRefreshing(false);
     }
-    setRefreshing(false);
-  }, []);
+  }, [loadItems, pollRefreshState]);
 
   // Similar mode renders a different surface: source banner + grid of
   // off-IG (TikTok) items. Reuses SourcesGrid so the card components
