@@ -1,6 +1,9 @@
+import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from db.session import engine
 from db.migrations import run_migrations
 from db.seed_master_templates import seed_master_templates
@@ -65,6 +68,38 @@ app.include_router(scheduled_reels.router)
 app.include_router(reference_pages.router)
 app.include_router(discovery_filters.router)
 app.include_router(discovery_items.router)
+
+
+_validation_log = logging.getLogger("validation")
+
+
+@app.exception_handler(RequestValidationError)
+async def _log_validation_errors(request: Request, exc: RequestValidationError):
+    """Log validation failures with field-level detail so we can debug
+    422s from prod without leaking the raw body (which contains
+    passwords on /auth/* routes).
+
+    The keys + types are useful for diagnosis; the values aren't —
+    Pydantic already tells us which field was missing or malformed.
+    """
+    errors = exc.errors()
+    sanitized_errors = []
+    for e in errors:
+        # Drop the ``input`` field — it contains the user-submitted
+        # value, which on auth routes is a password.
+        sanitized_errors.append({
+            "type": e.get("type"),
+            "loc": e.get("loc"),
+            "msg": e.get("msg"),
+        })
+    _validation_log.warning(
+        "422 validation failure on %s %s: %s",
+        request.method, request.url.path, sanitized_errors,
+    )
+    return JSONResponse(
+        status_code=422,
+        content={"detail": sanitized_errors},
+    )
 
 
 @app.get("/api/health")

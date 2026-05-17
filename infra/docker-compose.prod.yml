@@ -230,6 +230,12 @@ services:
     build:
       context: ../apps/web
       dockerfile: Dockerfile
+      args:
+        # Next.js inlines NEXT_PUBLIC_* env vars at BUILD time, not at
+        # runtime. Without this build-arg the bundle falls back to
+        # "http://localhost:8000" and every fetch from the browser
+        # fails with "Failed to fetch".
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     env_file:
       - ../.env
     depends_on:

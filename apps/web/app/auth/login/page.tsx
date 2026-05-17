@@ -16,10 +16,30 @@ export default function LoginPage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault(); setError(""); setLoading(true);
     try {
-      await api.auth.login({ email, password });
+      // Defensive trims — paste/autofill can leave a stray space or
+      // newline at either end, which makes EmailStr reject the value
+      // (422) and looks identical to a wrong password to the user.
+      const cleanEmail = email.trim();
+      const cleanPassword = password.trim();
+      if (!cleanEmail || !cleanPassword) {
+        setError("Please enter both email and password.");
+        setLoading(false);
+        return;
+      }
+      await api.auth.login({ email: cleanEmail, password: cleanPassword });
       router.push("/dashboard");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Invalid credentials");
+      if (err instanceof ApiError) {
+        if (err.status === 401) setError("Email or password is incorrect.");
+        else if (err.status === 422) setError("Please check the email format and try again.");
+        else if (err.status === 429) setError("Too many attempts. Please wait a minute and try again.");
+        else setError(err.message || "Something went wrong. Please try again.");
+      } else {
+        // Network failure / CSP block / extension — surface the real message
+        // so the user isn't left guessing why nothing happened.
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(`Network error: ${msg}. Check your connection and try again.`);
+      }
     } finally { setLoading(false); }
   }
 
