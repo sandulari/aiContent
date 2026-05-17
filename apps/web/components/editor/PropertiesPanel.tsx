@@ -12,6 +12,9 @@ interface SelectedLayer {
 interface PropertiesPanelProps {
   selectedLayer: SelectedLayer | null;
   onUpdateProps: (layerId: string, props: Record<string, any>) => void;
+  // Natural aspect ratio of the loaded source video (width/height).
+  // Used by VideoControls to compute Fill/Fit presets accurately.
+  videoNaturalAspect?: number | null;
 }
 
 const FONTS = [
@@ -472,29 +475,59 @@ function LogoControls({ p, update }: { p: Record<string, any>; update: (props: R
 
 // ─── Video Controls ─────────────────────────────────────────────────────
 
-function VideoControls({ p, update }: { p: Record<string, any>; update: (props: Record<string, any>) => void }) {
+function VideoControls({
+  p,
+  update,
+  videoNaturalAspect,
+}: {
+  p: Record<string, any>;
+  update: (props: Record<string, any>) => void;
+  videoNaturalAspect?: number | null;
+}) {
   const CANVAS_W = 360;
   const CANVAS_H = 640;
+  const CANVAS_ASPECT = CANVAS_W / CANVAS_H;
 
-  const fitCanvas = () => {
-    update({ x: 0, y: 0, w: CANVAS_W, h: CANVAS_H, flipH: p.flipH ?? false });
-  };
-
-  const fitWidth = () => {
-    // Fill full width, preserve the current aspect ratio
-    const curW = p.w ?? CANVAS_W;
-    const curH = p.h ?? CANVAS_H;
-    const ratio = curW > 0 ? curH / curW : 1;
-    const newH = CANVAS_W * ratio;
+  // Fill canvas: scale + center-crop the source so it covers the full
+  // 9:16. No black bars, no distortion — the same default Instagram /
+  // TikTok / Canva use for vertical templates.
+  const fillCanvas = () => {
+    const aspect = videoNaturalAspect ?? CANVAS_ASPECT;
+    let w: number, h: number;
+    if (aspect > CANVAS_ASPECT) {
+      h = CANVAS_H;
+      w = Math.round(CANVAS_H * aspect);
+    } else {
+      w = CANVAS_W;
+      h = Math.round(CANVAS_W / aspect);
+    }
     update({
-      x: 0,
-      y: Math.round((CANVAS_H - newH) / 2),
-      w: CANVAS_W,
-      h: Math.round(newH),
+      x: Math.round((CANVAS_W - w) / 2),
+      y: Math.round((CANVAS_H - h) / 2),
+      w,
+      h,
+      flipH: p.flipH ?? false,
     });
   };
 
-  const isDefault = p.x === 0 && p.y === 0 && p.w === CANVAS_W && p.h === CANVAS_H;
+  // Fit width: preserve aspect ratio, leave black bars top + bottom.
+  // Use when the user wants the entire source visible.
+  const fitWidth = () => {
+    const aspect = videoNaturalAspect ?? CANVAS_ASPECT;
+    const h = Math.round(CANVAS_W / aspect);
+    update({
+      x: 0,
+      y: Math.round((CANVAS_H - h) / 2),
+      w: CANVAS_W,
+      h,
+    });
+  };
+
+  // Stretch: distort the source to exactly fill 360×640. Last resort —
+  // labelled honestly so the user knows what it does.
+  const stretchCanvas = () => {
+    update({ x: 0, y: 0, w: CANVAS_W, h: CANVAS_H, flipH: p.flipH ?? false });
+  };
 
   return (
     <div className="space-y-3">
@@ -502,28 +535,31 @@ function VideoControls({ p, update }: { p: Record<string, any>; update: (props: 
         Drag the video on canvas to reposition. Corners = resize, edges = crop.
       </p>
 
-      {/* Reset + fit controls */}
-      <div className="grid grid-cols-2 gap-2">
+      {/* Reset + fit controls. Default "Fill canvas" is highlighted so
+          the safe option is the obvious one. */}
+      <div className="grid grid-cols-3 gap-2">
         <button
-          onClick={fitCanvas}
-          className="text-[10px] py-1.5 px-2 rounded border border-[#30363d] text-[#c9d1d9] hover:border-[#58a6ff] hover:bg-[#58a6ff]/5 transition-colors"
-          title="Reset video to fill the entire 9:16 canvas"
+          onClick={fillCanvas}
+          className="text-[10px] py-1.5 px-2 rounded border border-[#58a6ff]/40 bg-[#58a6ff]/10 text-[#c9d1d9] hover:border-[#58a6ff] hover:bg-[#58a6ff]/20 transition-colors"
+          title="Scale + center-crop to cover the entire 9:16 canvas (no bars, no distortion)"
         >
-          Fit to canvas
+          Fill canvas
         </button>
         <button
           onClick={fitWidth}
           className="text-[10px] py-1.5 px-2 rounded border border-[#30363d] text-[#c9d1d9] hover:border-[#58a6ff] hover:bg-[#58a6ff]/5 transition-colors"
-          title="Fill canvas width, centered vertically (keeps aspect)"
+          title="Show the whole video — adds black bars top + bottom for horizontal sources"
         >
-          Fit width, center
+          Fit width
+        </button>
+        <button
+          onClick={stretchCanvas}
+          className="text-[10px] py-1.5 px-2 rounded border border-[#30363d] text-[#c9d1d9] hover:border-[#f0a500] hover:bg-[#f0a500]/5 transition-colors"
+          title="Distort to exactly fill 360×640 (breaks aspect ratio)"
+        >
+          Stretch
         </button>
       </div>
-      {!isDefault && (
-        <p className="text-[10px] text-[#f0a500] leading-snug bg-[#f0a500]/10 border border-[#f0a500]/30 rounded p-1.5">
-          Video isn't filling the canvas. Click <strong>Fit to canvas</strong> above to reset.
-        </p>
-      )}
 
       <div className="grid grid-cols-2 gap-2">
         <NumInput label="Width" value={Math.round(p.w ?? 360)} onChange={(v) => update({ w: v })} />
@@ -540,7 +576,7 @@ function VideoControls({ p, update }: { p: Record<string, any>; update: (props: 
 
 // ─── Main Panel ─────────────────────────────────────────────────────────
 
-export function PropertiesPanel({ selectedLayer, onUpdateProps }: PropertiesPanelProps) {
+export function PropertiesPanel({ selectedLayer, onUpdateProps, videoNaturalAspect }: PropertiesPanelProps) {
   const update = useCallback(
     (props: Record<string, any>) => {
       if (selectedLayer) onUpdateProps(selectedLayer.id, props);
@@ -605,7 +641,7 @@ export function PropertiesPanel({ selectedLayer, onUpdateProps }: PropertiesPane
         aria-disabled={isLocked || undefined}
       >
         <div className="space-y-1">
-          {selectedLayer.type === "video" && <VideoControls p={p} update={update} />}
+          {selectedLayer.type === "video" && <VideoControls p={p} update={update} videoNaturalAspect={videoNaturalAspect} />}
           {isTextType && <TextControls p={p} update={update} />}
           {selectedLayer.type === "logo" && <LogoControls p={p} update={update} />}
         </div>

@@ -82,6 +82,11 @@ export default function EditorPage() {
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(30);
   const [isPlaying, setIsPlaying] = useState(false);
+  // Captured on the video's first loadedmetadata so VideoControls's
+  // Fill/Fit buttons can compute the right transform after the user
+  // has nudged things around (the live videoRef may be unavailable
+  // when the panel re-renders, or report 0 during quick re-seeks).
+  const [videoNaturalAspect, setVideoNaturalAspect] = useState<number | null>(null);
 
   // Audio
   const [muted, setMuted] = useState(false);
@@ -345,22 +350,29 @@ export default function EditorPage() {
         setDuration(vid.duration);
         setTrimEnd(vid.duration);
       }
-      // Canva-style fit-width on first video load:
-      // If the export didn't bring a saved video_transform, derive the
-      // display size from the actual video's natural aspect ratio so
-      // we preserve it instead of stretching to cover the canvas.
+      // Cover-fit on first video load (Instagram/TikTok default):
+      // Scale + center-crop the source so it fills the entire 9:16
+      // canvas — no letterbox bars. The canvas container is
+      // overflow:hidden, so anything that overflows the 360×640 box
+      // is clipped, and the backend exporter (worker/lib/video_proc.py)
+      // clamps to the same canvas before compositing.
+      if (vid.videoWidth && vid.videoHeight) {
+        setVideoNaturalAspect(vid.videoWidth / vid.videoHeight);
+      }
       if (!hasSavedVideoTransform && vid.videoWidth && vid.videoHeight) {
         const CW = 360;
         const CH = 640;
-        const aspect = vid.videoWidth / vid.videoHeight;
-        // Fit to canvas width (preserving aspect). If the resulting
-        // height exceeds canvas height, fit to height instead — the
-        // same fallback Canva uses for vertical-heavy source videos.
-        let w = CW;
-        let h = Math.round(CW / aspect);
-        if (h > CH) {
+        const vidAspect = vid.videoWidth / vid.videoHeight;
+        const canvasAspect = CW / CH;
+        let w: number, h: number;
+        if (vidAspect > canvasAspect) {
+          // Wider than 9:16 — fit height, crop horizontal sides.
           h = CH;
-          w = Math.round(CH * aspect);
+          w = Math.round(CH * vidAspect);
+        } else {
+          // Taller / square — fit width, crop top + bottom.
+          w = CW;
+          h = Math.round(CW / vidAspect);
         }
         const x = Math.round((CW - w) / 2);
         const y = Math.round((CH - h) / 2);
@@ -701,6 +713,7 @@ export default function EditorPage() {
           <PropertiesPanel
             selectedLayer={selectedLayer}
             onUpdateProps={handleUpdateProps}
+            videoNaturalAspect={videoNaturalAspect}
           />
         </div>
       </div>

@@ -163,21 +163,30 @@ export function Timeline({
             style={{ width: `${100 - trimEndPct}%` }}
           />
 
-          {/* Trim Start Handle */}
+          {/* Trim Start Handle — Canva-style chunky bracket so users
+              actually see they can drag the start point. */}
           <div
-            className="absolute top-1/2 -translate-y-1/2 w-3 h-6 bg-accent rounded-sm cursor-ew-resize hover:bg-accent/80 transition-colors duration-150 -translate-x-1/2 z-10"
+            className="absolute top-0 bottom-0 flex items-center cursor-ew-resize z-20 group -translate-x-1/2"
             style={{ left: `${trimStartPct}%` }}
             onPointerDown={(e) => handlePointerDown(e, "start")}
-            title={`Trim start: ${formatTime(trimStart)}`}
-          />
+            title={`Drag to trim start (${formatTime(trimStart)})`}
+          >
+            <div className="w-2 h-9 bg-[#58a6ff] rounded-l border-2 border-[#0d1117] group-hover:bg-[#79b8ff] transition-colors flex items-center justify-center">
+              <div className="w-0.5 h-3 bg-white/80 rounded" />
+            </div>
+          </div>
 
           {/* Trim End Handle */}
           <div
-            className="absolute top-1/2 -translate-y-1/2 w-3 h-6 bg-accent rounded-sm cursor-ew-resize hover:bg-accent/80 transition-colors duration-150 -translate-x-1/2 z-10"
+            className="absolute top-0 bottom-0 flex items-center cursor-ew-resize z-20 group -translate-x-1/2"
             style={{ left: `${trimEndPct}%` }}
             onPointerDown={(e) => handlePointerDown(e, "end")}
-            title={`Trim end: ${formatTime(trimEnd)}`}
-          />
+            title={`Drag to trim end (${formatTime(trimEnd)})`}
+          >
+            <div className="w-2 h-9 bg-[#58a6ff] rounded-r border-2 border-[#0d1117] group-hover:bg-[#79b8ff] transition-colors flex items-center justify-center">
+              <div className="w-0.5 h-3 bg-white/80 rounded" />
+            </div>
+          </div>
 
           {/* Playhead */}
           <div
@@ -193,6 +202,9 @@ export function Timeline({
           {formatTime(trimStart)} - {formatTime(trimEnd)}
         </div>
       </div>
+      <p className="mt-1.5 text-[10px] text-[#484f58]">
+        Drag the blue handles to trim the start/end. Click the track to scrub.
+      </p>
     </div>
   );
 }
