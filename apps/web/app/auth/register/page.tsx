@@ -4,6 +4,7 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, ApiError } from "@/lib/api";
+import { PasswordField } from "@/components/ui/passwordField";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -78,8 +79,12 @@ export default function RegisterPage() {
             </div>
             <div>
               <label className="block text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">Password</label>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="8+ characters"
-                className="w-full h-12 px-4 text-[15px] bg-[#161b22] text-[#c9d1d9] border border-[#21262d] rounded-lg focus:outline-none focus:border-[#58a6ff] placeholder:text-[#484f58] transition-colors duration-150" />
+              <PasswordField
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                placeholder="8+ characters"
+              />
             </div>
 
             {error && (

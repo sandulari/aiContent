@@ -4,6 +4,7 @@ import { useState, FormEvent, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api, ApiError } from "@/lib/api";
+import { PasswordField } from "@/components/ui/passwordField";
 
 function ResetPasswordForm() {
   const searchParams = useSearchParams();
@@ -46,15 +47,22 @@ function ResetPasswordForm() {
       <form onSubmit={handleSubmit} className="space-y-5">
         <div>
           <label className="block text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">New Password</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoFocus
+          <PasswordField
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            autoFocus
             placeholder="8+ characters"
-            className="w-full h-12 px-4 text-[15px] bg-[#161b22] text-[#c9d1d9] border border-[#21262d] rounded-lg focus:outline-none focus:border-[#58a6ff] placeholder:text-[#484f58] transition-colors duration-150" />
+          />
         </div>
         <div>
           <label className="block text-[11px] font-medium text-[#555] uppercase tracking-wider mb-2">Confirm Password</label>
-          <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required
+          <PasswordField
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            required
             placeholder="Re-enter your password"
-            className="w-full h-12 px-4 text-[15px] bg-[#161b22] text-[#c9d1d9] border border-[#21262d] rounded-lg focus:outline-none focus:border-[#58a6ff] placeholder:text-[#484f58] transition-colors duration-150" />
+          />
         </div>
 
         {error && (
