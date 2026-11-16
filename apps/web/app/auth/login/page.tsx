@@ -3,6 +3,7 @@
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { LegalLinks } from "@/components/legal/legalLinks";
 import { api, ApiError } from "@/lib/api";
 import { PasswordField } from "@/components/ui/passwordField";
 
@@ -131,6 +132,8 @@ export default function LoginPage() {
             Don't have an account?{" "}
             <Link href="/auth/register" className="text-[#4ade80] hover:text-[#86efac] font-medium">Create one</Link>
           </p>
+
+          <LegalLinks className="mt-10" />
         </div>
       </div>
     </div>

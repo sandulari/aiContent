@@ -2,6 +2,7 @@
 
 import { useState, FormEvent } from "react";
 import Link from "next/link";
+import { LegalLinks, LEGAL_URLS } from "@/components/legal/legalLinks";
 import { api, ApiError } from "@/lib/api";
 
 export default function ForgotPasswordPage() {
@@ -93,11 +94,19 @@ export default function ForgotPasswordPage() {
               {loading && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
               {loading ? "Sending..." : "Send Reset Link"}
             </button>
+
+            <p className="text-[12px] leading-relaxed text-[#484f58]">
+              We use your email only to send the reset link. See our{" "}
+              <a href={LEGAL_URLS.privacy} target="_blank" rel="noopener noreferrer"
+                className="text-[#4ade80] hover:text-[#86efac]">Privacy Policy</a>.
+            </p>
           </form>
 
           <p className="mt-6 text-center text-xs text-[#333]">
             <Link href="/auth/login" className="text-[#4ade80] hover:text-[#86efac] font-medium">Back to Sign in</Link>
           </p>
+
+          <LegalLinks className="mt-10" />
         </div>
       </div>
     </div>

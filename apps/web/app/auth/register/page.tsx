@@ -5,17 +5,22 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, ApiError } from "@/lib/api";
 import { PasswordField } from "@/components/ui/passwordField";
+import { LegalLinks, LEGAL_URLS } from "@/components/legal/legalLinks";
 
 export default function RegisterPage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // Privacy Policy acceptance. Starts unticked; submit is blocked until ticked.
+  const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
-    e.preventDefault(); setError(""); setLoading(true);
+    e.preventDefault(); setError("");
+    if (!agreed) { setError("Please accept the Privacy Policy to create your account."); return; }
+    setLoading(true);
     try {
       await api.auth.register({ email, display_name: name, password });
       router.push("/onboarding");
@@ -37,7 +42,7 @@ export default function RegisterPage() {
             Start creating viral content in minutes
           </h2>
           <p className="text-[15px] text-[#555] leading-relaxed mb-8">
-            Connect your Instagram, and our AI engine finds the perfect viral content for your brand. No manual searching. No guesswork. Just results.
+            Connect your Instagram, and our AI engine finds the perfect viral content for your brand. No manual searching. No guesswork.
           </p>
           <div className="flex items-center gap-6 text-[11px] text-[#444] uppercase tracking-wider">
             <div className="flex items-center gap-2">
@@ -87,13 +92,31 @@ export default function RegisterPage() {
               />
             </div>
 
+            <label className="flex items-start gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+                required
+                className="mt-0.5 h-4 w-4 shrink-0 rounded border border-[#21262d] bg-[#161b22] accent-[#238636] cursor-pointer"
+              />
+              <span className="text-[13px] leading-relaxed text-[#7d8590]">
+                I have read and accept the{" "}
+                <a href={LEGAL_URLS.privacy} target="_blank" rel="noopener noreferrer"
+                  className="text-[#4ade80] hover:text-[#86efac] font-medium">Privacy Policy</a>
+                {" "}and agree to the{" "}
+                <a href={LEGAL_URLS.terms} target="_blank" rel="noopener noreferrer"
+                  className="text-[#4ade80] hover:text-[#86efac] font-medium">Terms</a>.
+              </span>
+            </label>
+
             {error && (
               <div className="p-3 rounded-lg bg-[#dc2626]/5 border border-[#dc2626]/10">
                 <p className="text-sm text-[#f87171]">{error}</p>
               </div>
             )}
 
-            <button type="submit" disabled={loading}
+            <button type="submit" disabled={loading || !agreed}
               className="w-full h-12 rounded-lg text-[12px] font-bold uppercase tracking-[0.15em] text-white bg-[#238636] hover:bg-[#2ea043] disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150 flex items-center justify-center gap-2">
               {loading && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
               {loading ? "Creating..." : "Get Started"}
@@ -104,6 +127,8 @@ export default function RegisterPage() {
             Already have an account?{" "}
             <Link href="/auth/login" className="text-[#4ade80] hover:text-[#86efac] font-medium">Sign in</Link>
           </p>
+
+          <LegalLinks className="mt-10" />
         </div>
       </div>
     </div>

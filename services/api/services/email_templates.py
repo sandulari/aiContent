@@ -11,6 +11,23 @@ ever skip ``e()``.
 from services.sanitizer import escape_for_html as e
 
 
+# Legal links at the end of every email. The content engine has no legal
+# pages of its own, so these point at the main Shadow Pages site.
+_LEGAL_BASE = "https://start.shadowpages.io"
+_LEGAL_LINKS = [
+    ("Terms", "terms"),
+    ("Privacy", "privacy"),
+    ("Cookies", "cookies"),
+    ("Earnings Disclaimer", "disclaimer"),
+    ("Refund Policy", "refund"),
+    ("Impressum", "impressum"),
+]
+_LEGAL_LINKS_HTML = " &middot; ".join(
+    f'<a href="{_LEGAL_BASE}/{path}" style="color:#888888;text-decoration:underline;">{label}</a>'
+    for label, path in _LEGAL_LINKS
+)
+
+
 def _base_layout(content: str) -> str:
     """Wrap content in the shared email layout shell."""
     return f"""\
@@ -46,6 +63,10 @@ def _base_layout(content: str) -> str:
                 Shadow Pages &mdash; Your content, amplified.<br />
                 You received this email because you have an account with Shadow Pages.<br />
                 If you didn't request this email, you can safely ignore it.
+              </p>
+              <p style="margin:12px 0 0 0;font-size:11px;color:#666666;line-height:1.6;text-align:center;">
+                {_LEGAL_LINKS_HTML}<br />
+                &copy; Ares Online S.R.L., trading as Shadow Pages
               </p>
             </td>
           </tr>
