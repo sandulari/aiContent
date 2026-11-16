@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { LegalLinks } from "@/components/legal/legalLinks";
 
 // ── Niche tags ──────────────────────────────────────────────────────────
 const NICHE_TAGS = [
@@ -230,7 +231,7 @@ export default function OnboardingPage() {
   // ── Render ──────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-[#0d1117] flex items-center justify-center">
-      <div className="w-full max-w-lg px-6">
+      <div className="w-full max-w-lg px-6 pt-10">
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="w-14 h-14 rounded-lg bg-[#238636] flex items-center justify-center mx-auto mb-3">
@@ -513,6 +514,8 @@ export default function OnboardingPage() {
             </Button>
           </div>
         )}
+
+        <LegalLinks className="mt-12 pb-20" />
       </div>
     </div>
   );

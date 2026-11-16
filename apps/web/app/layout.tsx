@@ -1,5 +1,6 @@
 import "@/app/globals.css";
 import { Shell } from "@/components/layout/shell";
+import { CookieNotice } from "@/components/legal/cookieNotice";
 import {
   Inter,
   Roboto,
@@ -59,6 +60,7 @@ export default function RootLayout({
     <html lang="en" className={fontVars}>
       <body className="bg-background text-text-primary" style={{ fontFamily: "var(--font-inter), system-ui, sans-serif" }}>
         <Shell>{children}</Shell>
+        <CookieNotice />
       </body>
     </html>
   );

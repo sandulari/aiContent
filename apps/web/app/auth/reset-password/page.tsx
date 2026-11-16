@@ -3,6 +3,7 @@
 import { useState, FormEvent, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { LegalLinks } from "@/components/legal/legalLinks";
 import { api, ApiError } from "@/lib/api";
 import { PasswordField } from "@/components/ui/passwordField";
 
@@ -96,6 +97,8 @@ function ResetPasswordForm() {
           <Link href="/auth/login" className="text-[#4ade80] hover:text-[#86efac] font-medium">Back to Sign in</Link>
         </p>
       )}
+
+      <LegalLinks className="mt-10" />
     </div>
   );
 }
